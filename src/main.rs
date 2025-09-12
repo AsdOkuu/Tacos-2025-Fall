@@ -131,12 +131,10 @@ pub extern "C" fn main(hart_id: usize, dtb: usize) -> ! {
                 len += 1;
             }
             let input = str::from_utf8(&input[0..len]).unwrap();
-            if input == "whoami" {
-                kprintln!("2300012914");
-            } else if input == "exit" {
-                break;
-            } else {
-                kprintln!("invalid command");
+            match input {
+                "whoami" => kprintln!("2300012914"),
+                "exit" => break,
+                _ => kprintln!("invalid command"),
             }
         }
     }
