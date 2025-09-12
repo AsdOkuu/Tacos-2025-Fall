@@ -117,6 +117,28 @@ pub extern "C" fn main(hart_id: usize, dtb: usize) -> ! {
     #[cfg(feature = "shell")]
     {
         // TODO: Lab 0
+        loop {
+            kprint!("PKUOS>");
+            let mut input = [0; 4096];
+            let mut len = 0;
+            loop {
+                use crate::sbi::console_getchar;
+                let ch = console_getchar() as u8;
+                if ch == b'\n' {
+                    break;
+                }
+                input[len] = ch;
+                len += 1;
+            }
+            let input = str::from_utf8(&input[0..len]).unwrap();
+            if input == "whoami" {
+                kprintln!("2300012914");
+            } else if input == "exit" {
+                break;
+            } else {
+                kprintln!("invalid command");
+            }
+        }
     }
 
     DISKFS.unmount();
