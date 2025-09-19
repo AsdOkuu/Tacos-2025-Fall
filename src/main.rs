@@ -117,15 +117,26 @@ pub extern "C" fn main(hart_id: usize, dtb: usize) -> ! {
     #[cfg(feature = "shell")]
     {
         // TODO: Lab 0
-        loop {
+        const BSIZE: usize = 4096;
+        'shell: loop {
             kprint!("PKUOS>");
-            let mut input = [0; 4096];
+            let mut input = [0; BSIZE];
             let mut len = 0;
             loop {
                 use crate::sbi::console_getchar;
                 let ch = console_getchar() as u8;
                 if ch == b'\n' {
                     break;
+                }
+                if len == BSIZE {
+                    loop {
+                        let ch = console_getchar() as u8;
+                        if ch == b'\n' {
+                            break;
+                        }
+                    }
+                    kprintln!("buffer overflow");
+                    continue 'shell;
                 }
                 input[len] = ch;
                 len += 1;
