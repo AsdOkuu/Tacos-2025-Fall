@@ -12,8 +12,8 @@ use crate::sbi::interrupt;
 use crate::sbi::timer::timer_ticks;
 use crate::sync::Lazy;
 use crate::thread::{
-    schedule, switch, Builder, Mutex, Schedule, Scheduler, Status, Thread, MAGIC, PRI_DEFAULT,
-    PRI_MIN,
+    schedule, switch, wake_up, Builder, Mutex, Schedule, Scheduler, Status, Thread, MAGIC,
+    PRI_DEFAULT, PRI_MIN,
 };
 
 /* --------------------------------- MANAGER -------------------------------- */
@@ -73,13 +73,8 @@ impl Manager {
         self.all.lock().push(thread.clone());
     }
 
-    pub(super) fn timer_register(&self, time: i64) {
-        self.current.lock().set_status(Status::Blocked);
-        self.timer
-            .lock()
-            .entry(time)
-            .or_default()
-            .push(self.current.lock().clone());
+    pub(super) fn timer_register(&self, thread: Arc<Thread>, time: i64) {
+        self.timer.lock().entry(time).or_default().push(thread);
     }
 
     /// Choose a `ready` thread to run if possible. If found, do as follows:
@@ -104,8 +99,7 @@ impl Manager {
                         break;
                     }
                     for thread in tlist {
-                        thread.set_status(Status::Ready);
-                        self.scheduler.lock().register(Arc::clone(thread));
+                        wake_up(Arc::clone(thread));
                     }
                 }
                 None => break,

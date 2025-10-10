@@ -86,7 +86,9 @@ pub fn sleep(ticks: i64) {
     kprintln!("sleep time: {}; sleep end time: {}", ticks, start + ticks);
 
     if ticks > 0 {
-        Manager::get().timer_register(start + ticks);
+        Manager::get().timer_register(current(), start + ticks);
+        block();
+    } else {
+        schedule();
     }
-    schedule();
 }
