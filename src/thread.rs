@@ -10,6 +10,7 @@ pub use self::manager::Manager;
 pub(self) use self::scheduler::{Schedule, Scheduler};
 
 use alloc::sync::Arc;
+use core::sync::atomic::Ordering;
 
 /// Create a new thread
 pub fn spawn<F>(name: &'static str, f: F) -> Arc<Thread>
@@ -70,11 +71,19 @@ pub fn wake_up(thread: Arc<Thread>) {
 }
 
 /// (Lab1) Sets the current thread's priority to a given value
-pub fn set_priority(_priority: u32) {}
+pub fn set_priority(_priority: u32) {
+    let old_priority = get_priority();
+    current()
+        .priority
+        .fetch_add(_priority - old_priority, Ordering::Relaxed);
+    if _priority < old_priority {
+        schedule();
+    }
+}
 
 /// (Lab1) Returns the current thread's effective priority.
 pub fn get_priority() -> u32 {
-    0
+    current().priority.load(Ordering::Relaxed)
 }
 
 /// (Lab1) Make the current thread sleep for the given ticks.

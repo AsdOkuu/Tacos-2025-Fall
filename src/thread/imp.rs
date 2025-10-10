@@ -8,6 +8,7 @@ use core::sync::atomic::{AtomicIsize, AtomicU32, Ordering::SeqCst};
 
 use crate::mem::{kalloc, kfree, PageTable, PG_SIZE};
 use crate::sbi::interrupt;
+use crate::thread::schedule;
 use crate::thread::Manager;
 use crate::userproc::UserProc;
 
@@ -181,6 +182,9 @@ impl Builder {
         kprintln!("[THREAD] create {:?}", new_thread);
 
         Manager::get().register(new_thread.clone());
+
+        // Yield cpu
+        schedule();
 
         // Off you go
         new_thread

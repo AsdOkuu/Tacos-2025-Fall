@@ -5,6 +5,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::mem;
 use core::ops::DerefMut;
+use core::sync::atomic::Ordering;
 
 use crate::bootstack;
 use crate::mem::KernelPgTable;
@@ -12,8 +13,8 @@ use crate::sbi::interrupt;
 use crate::sbi::timer::timer_ticks;
 use crate::sync::Lazy;
 use crate::thread::{
-    schedule, switch, wake_up, Builder, Mutex, Schedule, Scheduler, Status, Thread, MAGIC,
-    PRI_DEFAULT, PRI_MIN,
+    get_priority, schedule, switch, wake_up, Builder, Mutex, Schedule, Scheduler, Status, Thread,
+    MAGIC, PRI_DEFAULT, PRI_MIN,
 };
 
 /* --------------------------------- MANAGER -------------------------------- */
@@ -131,14 +132,20 @@ impl Manager {
         );
 
         if let Some(next) = next {
+            let priority = next.priority.load(Ordering::Relaxed);
+            if self.current.lock().status() == Status::Running && get_priority() > priority {
+                // Not change
+                self.scheduler.lock().register(next);
+                interrupt::set(old);
+                return;
+            }
             assert_eq!(next.status(), Status::Ready);
             assert!(!next.overflow(), "Next thread has overflowed its stack.");
             next.set_status(Status::Running);
 
-            // kprintln!("[THREAD] switch to {:?}", next);
             // Update the current thread to the next running thread
             let previous = mem::replace(self.current.lock().deref_mut(), next);
-            // #[cfg(feature = "debug")]
+            #[cfg(feature = "debug")]
             kprintln!("[THREAD] switch from {:?}", previous);
 
             // Retrieve the raw pointers of two threads' context
