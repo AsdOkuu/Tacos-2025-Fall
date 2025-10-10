@@ -1,5 +1,6 @@
 //! Manager of all kernel threads
 
+use alloc::collections::btree_map::BTreeMap;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::mem;
@@ -8,9 +9,11 @@ use core::ops::DerefMut;
 use crate::bootstack;
 use crate::mem::KernelPgTable;
 use crate::sbi::interrupt;
+use crate::sbi::timer::timer_ticks;
 use crate::sync::Lazy;
 use crate::thread::{
-    schedule, switch, Builder, Mutex, Schedule, Scheduler, Status, Thread, MAGIC, PRI_DEFAULT, PRI_MIN
+    schedule, switch, Builder, Mutex, Schedule, Scheduler, Status, Thread, MAGIC, PRI_DEFAULT,
+    PRI_MIN,
 };
 
 /* --------------------------------- MANAGER -------------------------------- */
@@ -20,6 +23,8 @@ pub struct Manager {
     pub scheduler: Mutex<Scheduler>,
     /// The current running thread
     pub current: Mutex<Arc<Thread>>,
+    // Waiting for timer thread
+    pub timer: Mutex<BTreeMap<i64, Vec<Arc<Thread>>>>,
     /// All alive and not yet destroyed threads
     all: Mutex<Vec<Arc<Thread>>>,
 }
@@ -28,7 +33,14 @@ impl Manager {
     pub fn get() -> &'static Self {
         static TMANAGER: Lazy<Manager> = Lazy::new(|| {
             // Manully create initial thread.
-            let initial = Arc::new(Thread::new("Initial", bootstack as usize, PRI_DEFAULT, 0, None, None));
+            let initial = Arc::new(Thread::new(
+                "Initial",
+                bootstack as usize,
+                PRI_DEFAULT,
+                0,
+                None,
+                None,
+            ));
             unsafe { (bootstack as *mut usize).write(MAGIC) };
             initial.set_status(Status::Running);
 
@@ -36,6 +48,7 @@ impl Manager {
                 scheduler: Mutex::new(Scheduler::default()),
                 all: Mutex::new(Vec::from([initial.clone()])),
                 current: Mutex::new(initial),
+                timer: Mutex::new(BTreeMap::new()),
             };
 
             let idle = Builder::new(|| loop {
@@ -60,6 +73,15 @@ impl Manager {
         self.all.lock().push(thread.clone());
     }
 
+    pub(super) fn timer_register(&self, time: i64) {
+        self.current.lock().set_status(Status::Blocked);
+        self.timer
+            .lock()
+            .entry(time)
+            .or_default()
+            .push(self.current.lock().clone());
+    }
+
     /// Choose a `ready` thread to run if possible. If found, do as follows:
     ///
     /// 1. Turn off intr. Mark the `next` thread as [`Running`](Status::Running) and
@@ -73,23 +95,56 @@ impl Manager {
     pub fn schedule(&self) {
         let old = interrupt::set(false);
 
+        let now_tick = timer_ticks();
+        // register time-out thread
+        loop {
+            match self.timer.lock().first_key_value() {
+                Some((time, tlist)) => {
+                    if *time > now_tick {
+                        break;
+                    }
+                    for thread in tlist {
+                        thread.set_status(Status::Ready);
+                        self.scheduler.lock().register(Arc::clone(thread));
+                    }
+                }
+                None => break,
+            }
+            self.timer.lock().pop_first();
+        }
+
         let next = self.scheduler.lock().schedule();
+        /*
+        while next.is_some() {
+            if let Some(inner) = &next {
+                kprintln!("{} {} is {:?}", inner.name(), inner.id(), inner.status());
+                if inner.status() == Status::Ready {
+                    break;
+                }
+            }
+            next = self.scheduler.lock().schedule();
+        }
+        */
 
         // Make sure there's at least one thread runnable.
         assert!(
             self.current.lock().status() == Status::Running || next.is_some(),
             "no thread is ready"
         );
-        assert!(!self.current.lock().overflow(), "Current thread has overflowed its stack.");
+        assert!(
+            !self.current.lock().overflow(),
+            "Current thread has overflowed its stack."
+        );
 
         if let Some(next) = next {
             assert_eq!(next.status(), Status::Ready);
             assert!(!next.overflow(), "Next thread has overflowed its stack.");
             next.set_status(Status::Running);
 
+            // kprintln!("[THREAD] switch to {:?}", next);
             // Update the current thread to the next running thread
             let previous = mem::replace(self.current.lock().deref_mut(), next);
-            #[cfg(feature = "debug")]
+            // #[cfg(feature = "debug")]
             kprintln!("[THREAD] switch from {:?}", previous);
 
             // Retrieve the raw pointers of two threads' context

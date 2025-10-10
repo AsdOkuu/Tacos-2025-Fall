@@ -79,11 +79,14 @@ pub fn get_priority() -> u32 {
 
 /// (Lab1) Make the current thread sleep for the given ticks.
 pub fn sleep(ticks: i64) {
-    use crate::sbi::timer::{timer_elapsed, timer_ticks};
+    use crate::sbi::timer::timer_ticks;
 
     let start = timer_ticks();
 
-    while timer_elapsed(start) < ticks {
-        schedule();
+    kprintln!("sleep time: {}; sleep end time: {}", ticks, start + ticks);
+
+    if ticks > 0 {
+        Manager::get().timer_register(start + ticks);
     }
+    schedule();
 }
