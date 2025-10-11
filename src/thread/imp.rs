@@ -2,8 +2,10 @@
 
 use alloc::boxed::Box;
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use core::arch::global_asm;
 use core::fmt::{self, Debug};
+use core::sync::atomic::Ordering;
 use core::sync::atomic::{AtomicIsize, AtomicU32, Ordering::SeqCst};
 
 use crate::mem::{kalloc, kfree, PageTable, PG_SIZE};
@@ -32,6 +34,10 @@ pub struct Thread {
     status: Mutex<Status>,
     context: Mutex<Context>,
     pub priority: AtomicU32,
+    pub wait_thread: Mutex<Option<Arc<Thread>>>,
+    pub origin_priority: AtomicU32,
+    pub priority_list: Mutex<Vec<u32>>,
+    pub locking: Mutex<u32>,
     pub userproc: Option<UserProc>,
     pub pagetable: Option<Mutex<PageTable>>,
 }
@@ -55,6 +61,10 @@ impl Thread {
             status: Mutex::new(Status::Ready),
             context: Mutex::new(Context::new(stack, entry)),
             priority: AtomicU32::new(priority),
+            wait_thread: Mutex::new(None),
+            origin_priority: AtomicU32::new(0),
+            priority_list: Mutex::new(Vec::new()),
+            locking: Mutex::new(0),
             userproc,
             pagetable: pagetable.map(Mutex::new),
         }
@@ -82,6 +92,78 @@ impl Thread {
 
     pub fn overflow(&self) -> bool {
         unsafe { (self.stack as *const usize).read() != MAGIC }
+    }
+
+    pub fn wait(&self, thread: Arc<Thread>) {
+        if *thread.locking.lock() == 0 {
+            // set origin
+            let origin = thread.origin_priority.load(Ordering::Relaxed);
+            let now = thread.priority.load(Ordering::Relaxed);
+            thread
+                .origin_priority
+                .fetch_add(now - origin, Ordering::Relaxed);
+        }
+        *thread.locking.lock() += 1;
+
+        thread.update(self.priority.load(Ordering::Relaxed));
+        *self.wait_thread.lock() = Some(thread);
+    }
+
+    pub fn unwait(&self) {
+        if let Some(thread) = &*self.wait_thread.lock() {
+            thread.unupdate(self.priority.load(Ordering::Relaxed));
+            *thread.locking.lock() -= 1;
+            if *thread.locking.lock() == 0 {
+                let origin = thread.origin_priority.load(Ordering::Relaxed);
+                let now = thread.priority.load(Ordering::Relaxed);
+                thread.priority.fetch_add(origin - now, Ordering::Relaxed);
+            }
+        }
+        *self.wait_thread.lock() = None;
+    }
+
+    fn update(&self, _priority: u32) {
+        kprintln!("{} {} updated.", self.name(), self.id());
+
+        self.priority_list.lock().push(_priority);
+
+        self.check();
+
+        let thread = self.wait_thread.lock();
+        if let Some(_thread) = &*thread {
+            _thread.update(_priority);
+        }
+    }
+
+    fn unupdate(&self, _priority: u32) {
+        kprintln!("{} {} UNupdated.", self.name(), self.id());
+
+        let pos = self
+            .priority_list
+            .lock()
+            .iter()
+            .position(|x| *x == self.priority.load(Ordering::Relaxed))
+            .unwrap();
+        self.priority_list.lock().remove(pos);
+
+        self.check();
+
+        let thread = self.wait_thread.lock();
+        if let Some(_thread) = &*thread {
+            _thread.unupdate(_priority);
+        }
+    }
+
+    fn check(&self) {
+        let mut mx_priority: u32 = self.origin_priority.load(Ordering::Relaxed);
+        for p in self.priority_list.lock().iter() {
+            if *p > mx_priority {
+                mx_priority = *p;
+            }
+        }
+        let priority = self.priority.load(Ordering::Relaxed);
+        self.priority
+            .fetch_add(mx_priority - priority, Ordering::Relaxed);
     }
 }
 

@@ -72,12 +72,19 @@ pub fn wake_up(thread: Arc<Thread>) {
 
 /// (Lab1) Sets the current thread's priority to a given value
 pub fn set_priority(_priority: u32) {
-    let old_priority = get_priority();
-    current()
-        .priority
-        .fetch_add(_priority - old_priority, Ordering::Relaxed);
-    if _priority < old_priority {
-        schedule();
+    if *current().locking.lock() > 0 {
+        let old_priority = current().origin_priority.load(Ordering::Relaxed);
+        current()
+            .origin_priority
+            .fetch_add(_priority - old_priority, Ordering::Relaxed);
+    } else {
+        let old_priority = get_priority();
+        current()
+            .priority
+            .fetch_add(_priority - old_priority, Ordering::Relaxed);
+        if _priority < old_priority {
+            schedule();
+        }
     }
 }
 

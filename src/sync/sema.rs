@@ -1,7 +1,7 @@
-use alloc::collections::BTreeMap;
-use alloc::collections::VecDeque;
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use core::cell::{Cell, RefCell};
+use core::sync::atomic::Ordering;
 
 use crate::sbi;
 use crate::thread::{self, Thread};
@@ -17,7 +17,7 @@ use crate::thread::{self, Thread};
 #[derive(Clone)]
 pub struct Semaphore {
     value: Cell<usize>,
-    waiters: RefCell<BTreeMap<u32, VecDeque<Arc<Thread>>>>,
+    waiters: RefCell<Vec<Arc<Thread>>>,
 }
 
 unsafe impl Sync for Semaphore {}
@@ -28,7 +28,7 @@ impl Semaphore {
     pub const fn new(n: usize) -> Self {
         Semaphore {
             value: Cell::new(n),
-            waiters: RefCell::new(BTreeMap::new()),
+            waiters: RefCell::new(Vec::new()),
         }
     }
 
@@ -39,11 +39,7 @@ impl Semaphore {
         // Is semaphore available?
         while self.value() == 0 {
             // `push_front` ensures to wake up threads in a fifo manner
-            self.waiters
-                .borrow_mut()
-                .entry(thread::get_priority())
-                .or_default()
-                .push_front(thread::current());
+            self.waiters.borrow_mut().push(thread::current());
 
             // Block the current thread until it's awakened by an `up` operation
             thread::block();
@@ -55,12 +51,24 @@ impl Semaphore {
 
     // Check next wake up thread
     fn sema_schedule(&self) -> Option<Arc<Thread>> {
-        for (_priority, tlist) in self.waiters.borrow_mut().iter_mut().rev() {
-            if !tlist.is_empty() {
-                return tlist.pop_back();
+        let mut index: usize = 0;
+        let mut priority: u32 = 0;
+        let mut tlist = self.waiters.borrow_mut();
+        if tlist.is_empty() {
+            None
+        } else {
+            for i in (0..tlist.len()).rev() {
+                let thread = &tlist[i];
+                let new_priority = thread.priority.load(Ordering::Relaxed);
+                if new_priority >= priority {
+                    priority = new_priority;
+                    index = i;
+                }
             }
+            #[cfg(feature = "debug")]
+            kprintln!("scheduler decide {} to run.", index);
+            Some(tlist.remove(index))
         }
-        None
     }
 
     /// V operation
