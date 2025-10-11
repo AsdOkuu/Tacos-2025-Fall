@@ -75,7 +75,9 @@ impl Manager {
     }
 
     pub(super) fn timer_register(&self, thread: Arc<Thread>, time: i64) {
+        let old = interrupt::set(false);
         self.timer.lock().entry(time).or_default().push(thread);
+        interrupt::set(old);
     }
 
     /// Choose a `ready` thread to run if possible. If found, do as follows:
