@@ -99,6 +99,7 @@ pub fn sleep(ticks: i64) {
 
     let start = timer_ticks();
 
+    #[cfg(feature = "debug")]
     kprintln!("sleep time: {}; sleep end time: {}", ticks, start + ticks);
 
     if ticks > 0 {

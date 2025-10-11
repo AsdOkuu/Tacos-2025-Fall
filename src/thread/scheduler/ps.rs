@@ -19,6 +19,7 @@ impl Schedule for Ps {
         for (_priority, tlist) in self.0.iter_mut().rev() {
             if !tlist.is_empty() {
                 let thread = tlist.pop_back();
+                #[cfg(feature = "debug")]
                 if let Some(thread) = &thread {
                     kprintln!(
                         "{} {} get scheduled with priority {}",

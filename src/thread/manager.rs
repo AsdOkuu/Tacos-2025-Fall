@@ -109,17 +109,6 @@ impl Manager {
         }
 
         let next = self.scheduler.lock().schedule();
-        /*
-        while next.is_some() {
-            if let Some(inner) = &next {
-                kprintln!("{} {} is {:?}", inner.name(), inner.id(), inner.status());
-                if inner.status() == Status::Ready {
-                    break;
-                }
-            }
-            next = self.scheduler.lock().schedule();
-        }
-        */
 
         // Make sure there's at least one thread runnable.
         assert!(

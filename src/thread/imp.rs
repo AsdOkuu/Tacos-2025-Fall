@@ -123,6 +123,7 @@ impl Thread {
     }
 
     fn update(&self, _priority: u32) {
+        #[cfg(feature = "debug")]
         kprintln!("{} {} updated.", self.name(), self.id());
 
         self.priority_list.lock().push(_priority);
@@ -136,6 +137,7 @@ impl Thread {
     }
 
     fn unupdate(&self, _priority: u32) {
+        #[cfg(feature = "debug")]
         kprintln!("{} {} UNupdated.", self.name(), self.id());
 
         let pos = self
