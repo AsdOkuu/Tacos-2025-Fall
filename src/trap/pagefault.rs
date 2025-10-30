@@ -54,8 +54,9 @@ pub fn handler(frame: &mut Frame, fault: Exception, addr: usize) {
         }
         SPP::User => {
             kprintln!(
-                "User thread {} dying due to page fault.",
-                thread::current().name()
+                "User thread {} {} dying due to page fault.",
+                thread::current().name(),
+                thread::current().id()
             );
             userproc::exit(-1);
         }

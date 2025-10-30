@@ -131,8 +131,15 @@ impl Manager {
                 return;
             }
             assert_eq!(next.status(), Status::Ready);
-            assert!(!next.overflow(), "Next thread has overflowed its stack.");
+            assert!(
+                !next.overflow(),
+                "Next thread {:?} has overflowed its stack.",
+                next
+            );
             next.set_status(Status::Running);
+
+            #[cfg(feature = "debug")]
+            kprintln!("switch to thread {:?}", next);
 
             // Update the current thread to the next running thread
             let previous = mem::replace(self.current.lock().deref_mut(), next);

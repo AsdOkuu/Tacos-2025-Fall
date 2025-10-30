@@ -72,6 +72,7 @@ pub struct File {
     vnode: Arc<dyn Vnode>,
     pos: usize,
     deny_write: bool,
+    deny_read: bool,
 }
 
 impl File {
@@ -86,6 +87,9 @@ impl File {
 
 impl Read for File {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+        if self.deny_read {
+            return Err(crate::OsError::UserError);
+        }
         let cnt = self.vnode.read_at(buf, self.pos)?;
         self.pos += cnt;
         Ok(cnt)
@@ -120,12 +124,17 @@ impl File {
             vnode,
             pos: 0,
             deny_write: false,
+            deny_read: false,
         }
     }
 
     pub fn deny_write(&mut self) {
         self.deny_write = true;
         self.vnode.deny_write();
+    }
+
+    pub fn deny_read(&mut self) {
+        self.deny_read = true;
     }
 }
 

@@ -7,6 +7,7 @@ mod syscall;
 use crate::device::{plic, virtio};
 use crate::sbi;
 use crate::thread;
+use crate::userproc::exit;
 use core::arch;
 
 use riscv::register::scause::{Exception::*, Interrupt::*, Trap::*};
@@ -69,6 +70,8 @@ pub extern "C" fn trap_handler(frame: &mut Frame) {
         }
 
         Interrupt(SupervisorTimer) => {
+            #[cfg(feature = "debug")]
+            kprintln!("timer interrupt");
             sbi::timer::tick();
             unsafe { riscv::register::sstatus::set_sie() };
             thread::schedule();
@@ -91,7 +94,8 @@ pub extern "C" fn trap_handler(frame: &mut Frame) {
 
         Exception(InstructionFault) | Exception(IllegalInstruction) => {
             // TODO: kill user process but not panic kernel
-            panic!("Instruction failure");
+            exit(-1);
+            // panic!("Instruction failure");
         }
 
         Exception(f @ LoadPageFault)

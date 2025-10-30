@@ -17,7 +17,7 @@ use crate::userproc::UserProc;
 pub const PRI_DEFAULT: u32 = 31;
 pub const PRI_MAX: u32 = 63;
 pub const PRI_MIN: u32 = 0;
-pub const STACK_SIZE: usize = PG_SIZE * 4;
+pub const STACK_SIZE: usize = PG_SIZE * 16;
 pub const STACK_ALIGN: usize = 16;
 pub const STACK_TOP: usize = 0x80500000;
 pub const MAGIC: usize = 0xdeadbeef;
@@ -40,6 +40,7 @@ pub struct Thread {
     pub locking: Mutex<u32>,
     pub userproc: Option<UserProc>,
     pub pagetable: Option<Mutex<PageTable>>,
+    pub child: Mutex<Vec<Arc<Thread>>>,
 }
 
 impl Thread {
@@ -67,6 +68,7 @@ impl Thread {
             locking: Mutex::new(0),
             userproc,
             pagetable: pagetable.map(Mutex::new),
+            child: Mutex::new(Vec::new()),
         }
     }
 
