@@ -34,12 +34,9 @@ const SYS_TELL: usize = 10;
 const SYS_CLOSE: usize = 11;
 const SYS_FSTAT: usize = 12;
 
-fn get_string_checked(mut ptr: usize, size: Option<usize>) -> Result<String, ()> {
+fn get_u8array_checked(mut ptr: usize, size: usize) -> Result<Vec<u8>, ()> {
     let mut raw = Vec::new();
-    let mut len = match &size {
-        Some(s) => *s,
-        None => usize::MAX,
-    };
+    let mut len = size;
     while len > 0 {
         match current().pagetable.as_ref().unwrap().lock().get_pte(ptr) {
             None => return Err(()),
@@ -50,8 +47,33 @@ fn get_string_checked(mut ptr: usize, size: Option<usize>) -> Result<String, ()>
             }
         }
         let ch = unsafe { *(ptr as *const u8) };
+        raw.push(ch);
 
-        if size.is_none() && ch == 0 {
+        let newptr = ptr.checked_add(1);
+        if newptr.is_none() {
+            return Err(());
+        }
+        ptr = newptr.unwrap();
+        len -= 1;
+    }
+
+    Ok(raw)
+}
+
+fn get_string_checked(mut ptr: usize) -> Result<String, ()> {
+    let mut raw = Vec::new();
+    loop {
+        match current().pagetable.as_ref().unwrap().lock().get_pte(ptr) {
+            None => return Err(()),
+            Some(pte) => {
+                if !pte.is_valid() {
+                    return Err(());
+                }
+            }
+        }
+        let ch = unsafe { *(ptr as *const u8) };
+
+        if ch == 0 {
             break;
         }
         raw.push(ch);
@@ -61,7 +83,6 @@ fn get_string_checked(mut ptr: usize, size: Option<usize>) -> Result<String, ()>
             return Err(());
         }
         ptr = newptr.unwrap();
-        len -= 1;
     }
 
     let s = from_utf8(&raw);
@@ -83,7 +104,7 @@ pub fn syscall_handler(_id: usize, _args: [usize; 3]) -> isize {
             }
 
             // check file name validity.
-            let name = match get_string_checked(_args[0] as usize, None) {
+            let name = match get_string_checked(_args[0] as usize) {
                 Ok(n) => n,
                 Err(_) => return -1,
             };
@@ -109,7 +130,7 @@ pub fn syscall_handler(_id: usize, _args: [usize; 3]) -> isize {
                 }
 
                 // check inner arg validity.
-                let s = match get_string_checked(arg, None) {
+                let s = match get_string_checked(arg) {
                     Ok(s) => s,
                     Err(_) => return -1,
                 };
@@ -134,7 +155,7 @@ pub fn syscall_handler(_id: usize, _args: [usize; 3]) -> isize {
             if current().userproc.is_none() {
                 return -1;
             }
-            let name = match get_string_checked(_args[0] as usize, None) {
+            let name = match get_string_checked(_args[0]) {
                 Ok(n) => n,
                 Err(_) => return -1,
             };
@@ -232,7 +253,7 @@ pub fn syscall_handler(_id: usize, _args: [usize; 3]) -> isize {
             }
             let fd = _args[0];
             let size = _args[2];
-            let s = match get_string_checked(_args[1] as usize, Some(size)) {
+            let s = match get_u8array_checked(_args[1], size) {
                 Ok(n) => n,
                 Err(_) => return -1,
             };
@@ -243,7 +264,7 @@ pub fn syscall_handler(_id: usize, _args: [usize; 3]) -> isize {
                 }
                 1 | 2 => {
                     // stdout | stderr
-                    kprint!("{}", s);
+                    kprint!("{}", s.iter().map(|&c| c as char).collect::<String>());
                     size as isize
                 }
                 fd => {
@@ -266,7 +287,7 @@ pub fn syscall_handler(_id: usize, _args: [usize; 3]) -> isize {
             }
         }
         SYS_REMOVE => {
-            let name = match get_string_checked(_args[0] as usize, None) {
+            let name = match get_string_checked(_args[0]) {
                 Ok(n) => n,
                 Err(_) => return -1,
             };
