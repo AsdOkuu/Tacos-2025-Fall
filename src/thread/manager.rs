@@ -80,6 +80,21 @@ impl Manager {
         interrupt::set(old);
     }
 
+    pub fn destroy(&self) {
+        let old = interrupt::set(false);
+        self.all.lock().retain(|thread| match thread.status() {
+            Status::Dying => match thread.userproc.as_ref() {
+                Some(userproc) => match userproc.father.status() {
+                    Status::Dying => false,
+                    _ => true,
+                },
+                None => false,
+            },
+            _ => true,
+        });
+        interrupt::set(old);
+    }
+
     /// Choose a `ready` thread to run if possible. If found, do as follows:
     ///
     /// 1. Turn off intr. Mark the `next` thread as [`Running`](Status::Running) and

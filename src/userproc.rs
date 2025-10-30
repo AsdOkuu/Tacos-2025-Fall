@@ -16,12 +16,14 @@ use crate::mem::pagetable::KernelPgTable;
 use crate::sbi::interrupt::set;
 use crate::sync::Mutex;
 use crate::sync::Semaphore;
+use crate::thread::Thread;
 use crate::thread::{self, current};
 use crate::trap::{trap_exit_u, Frame};
 
 pub struct UserProc {
     #[allow(dead_code)]
     bin: File,
+    pub father: Arc<Thread>,
     status: Mutex<Option<isize>>,
     wait: Mutex<Option<(Arc<Semaphore>, Arc<Semaphore>)>>,
     pub fdlist: Mutex<Vec<Option<Mutex<File>>>>,
@@ -31,6 +33,7 @@ impl UserProc {
     pub fn new(file: File) -> Self {
         Self {
             bin: file,
+            father: current(),
             status: Mutex::new(None),
             wait: Mutex::new(None),
             fdlist: Mutex::new(Vec::new()),
@@ -107,7 +110,7 @@ pub fn exit(_value: isize) -> ! {
     // TODO: Lab2.
     #[cfg(feature = "debug")]
     kprintln!("Into userproc::exit");
-    let old = set(false);
+    set(false);
     assert!(
         current().userproc.is_some(),
         "Current thread doesn't own a user process."
@@ -115,7 +118,6 @@ pub fn exit(_value: isize) -> ! {
 
     *current().userproc.as_ref().unwrap().status.lock() = Some(_value);
 
-    set(old);
     // Wake waiting thread up.
     if let Some((psema, csema)) = current().userproc.as_ref().unwrap().wait.lock().as_ref() {
         #[cfg(feature = "debug")]

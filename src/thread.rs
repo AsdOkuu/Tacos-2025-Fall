@@ -25,6 +25,11 @@ pub fn current() -> Arc<Thread> {
     Manager::get().current.lock().clone()
 }
 
+/// Destroy all `Dying` threads
+pub fn destroy() {
+    Manager::get().destroy();
+}
+
 /// Yield the control to another thread (if there's another one ready to run).
 pub fn schedule() {
     Manager::get().schedule()
