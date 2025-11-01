@@ -41,7 +41,7 @@ fn get_u8array_checked(mut ptr: usize, size: usize) -> Result<Vec<u8>, ()> {
         match current().pagetable.as_ref().unwrap().lock().get_pte(ptr) {
             None => return Err(()),
             Some(pte) => {
-                if !pte.is_valid() {
+                if !pte.is_valid() || !pte.is_readable() || !pte.is_user() {
                     return Err(());
                 }
             }
@@ -66,7 +66,7 @@ fn get_string_checked(mut ptr: usize) -> Result<String, ()> {
         match current().pagetable.as_ref().unwrap().lock().get_pte(ptr) {
             None => return Err(()),
             Some(pte) => {
-                if !pte.is_valid() {
+                if !pte.is_valid() || !pte.is_readable() || !pte.is_user() {
                     return Err(());
                 }
             }
@@ -208,7 +208,7 @@ pub fn syscall_handler(_id: usize, _args: [usize; 3]) -> isize {
                 {
                     None => return -1,
                     Some(pte) => {
-                        if !pte.is_valid() {
+                        if !pte.is_valid() || !pte.is_writable() || !pte.is_user() {
                             return -1;
                         }
                     }

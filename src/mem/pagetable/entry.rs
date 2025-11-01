@@ -59,6 +59,14 @@ impl Entry {
         self.flag().contains(PTEFlags::G)
     }
 
+    pub fn is_readable(&self) -> bool {
+        self.flag().contains(PTEFlags::R)
+    }
+
+    pub fn is_writable(&self) -> bool {
+        self.flag().contains(PTEFlags::W)
+    }
+
     pub fn is_rwable(&self) -> bool {
         self.flag().contains(PTEFlags::R | PTEFlags::W)
     }
