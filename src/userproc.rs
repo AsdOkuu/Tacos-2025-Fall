@@ -13,6 +13,7 @@ use riscv::register::sstatus;
 
 use crate::fs::File;
 use crate::mem::pagetable::KernelPgTable;
+use crate::mem::PG_SIZE;
 use crate::sbi::interrupt::set;
 use crate::sync::Mutex;
 use crate::sync::Semaphore;
@@ -85,7 +86,7 @@ pub fn execute(mut file: File, argv: Vec<String>) -> isize {
     }
     let align = size_of::<usize>();
     arg_size = arg_size * align + (str_size + align - 1) / align * align;
-    if arg_size > 4096 {
+    if arg_size > PG_SIZE {
         kprintln!("Too many arguments!");
         unsafe {
             pt.destroy();
