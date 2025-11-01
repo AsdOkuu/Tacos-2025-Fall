@@ -15,6 +15,10 @@
 /target/*
 /Cargo.lock
 
+# SHELL #
+#########
+tool/tooltest.sh
+
 *.img
 
 # Prerequisites

@@ -5,7 +5,7 @@ mod pagefault;
 mod syscall;
 
 use crate::device::{plic, virtio};
-use crate::sbi;
+use crate::sbi::{self, interrupt};
 use crate::thread;
 use crate::userproc::exit;
 use core::arch;
@@ -65,8 +65,10 @@ pub extern "C" fn trap_handler(frame: &mut Frame) {
             kprintln!("[TRAP] User ECall, ID={}, args={:?}", id, args);
             unsafe { riscv::register::sstatus::set_sie() };
             // Increase sepc by 1 to skip ecall.
+            let old = interrupt::set(false);
             frame.sepc += 4;
             frame.x[10] = syscall::syscall_handler(id, args) as usize;
+            interrupt::set(old);
         }
 
         Interrupt(SupervisorTimer) => {
