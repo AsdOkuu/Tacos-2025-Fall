@@ -84,9 +84,9 @@ impl Manager {
         let old = interrupt::set(false);
         self.all.lock().retain(|thread| match thread.status() {
             Status::Dying => match thread.userproc.as_ref() {
-                Some(userproc) => match userproc.father.status() {
-                    Status::Dying => false,
-                    _ => true,
+                Some(userproc) => match *userproc.exited.lock() {
+                    true => false,
+                    false => true,
                 },
                 None => false,
             },

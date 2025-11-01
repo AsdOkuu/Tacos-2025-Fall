@@ -16,27 +16,26 @@ use crate::mem::pagetable::KernelPgTable;
 use crate::sbi::interrupt::set;
 use crate::sync::Mutex;
 use crate::sync::Semaphore;
-use crate::thread::Thread;
 use crate::thread::{self, current};
 use crate::trap::{trap_exit_u, Frame};
 
 pub struct UserProc {
     #[allow(dead_code)]
     bin: File,
-    pub father: Arc<Thread>,
     status: Mutex<Option<isize>>,
     wait: Mutex<Option<(Arc<Semaphore>, Arc<Semaphore>)>>,
     pub fdlist: Mutex<Vec<Option<Mutex<File>>>>,
+    pub exited: Mutex<bool>,
 }
 
 impl UserProc {
     pub fn new(file: File) -> Self {
         Self {
             bin: file,
-            father: current(),
             status: Mutex::new(None),
             wait: Mutex::new(None),
             fdlist: Mutex::new(Vec::new()),
+            exited: Mutex::new(false),
         }
     }
 }
@@ -139,6 +138,7 @@ pub fn exit(_value: isize) -> ! {
         current().id(),
         _value
     );
+    *current().userproc.as_ref().unwrap().exited.lock() = true;
     thread::exit();
 }
 
@@ -178,6 +178,7 @@ pub fn wait(_tid: isize) -> Option<isize> {
                 kprint!("Child thread {} {} already exited.\n", thread.name(), _tid);
                 result = Some(val);
                 index = Some(ind);
+                drop(lock);
                 set(old);
                 break;
             }
