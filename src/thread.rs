@@ -35,6 +35,11 @@ pub fn schedule() {
     Manager::get().schedule()
 }
 
+/// Wake up timer threads.
+pub fn timer_wake() {
+    Manager::get().timer_wake();
+}
+
 /// Gracefully shut down the current thread, and schedule another one.
 pub fn exit() -> ! {
     {

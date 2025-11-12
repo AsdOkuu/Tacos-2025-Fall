@@ -95,19 +95,8 @@ impl Manager {
         interrupt::set(old);
     }
 
-    /// Choose a `ready` thread to run if possible. If found, do as follows:
-    ///
-    /// 1. Turn off intr. Mark the `next` thread as [`Running`](Status::Running) and
-    /// change manager's current thread.
-    ///
-    /// 2. Forward the `previous` thread to [`schedule_tail`] through [`switch`].
-    /// In [`schedule_tail`], the finishing touches of the schedule is done in the
-    /// new chosen thread, including releasing a dead thread's resources.
-    ///
-    /// 3. Get back from the other thread and restore the intr setting.
-    pub fn schedule(&self) {
+    pub fn timer_wake(&self) {
         let old = interrupt::set(false);
-
         let now_tick = timer_ticks();
         // register time-out thread
         loop {
@@ -124,6 +113,21 @@ impl Manager {
             }
             self.timer.lock().pop_first();
         }
+        interrupt::set(old);
+    }
+
+    /// Choose a `ready` thread to run if possible. If found, do as follows:
+    ///
+    /// 1. Turn off intr. Mark the `next` thread as [`Running`](Status::Running) and
+    /// change manager's current thread.
+    ///
+    /// 2. Forward the `previous` thread to [`schedule_tail`] through [`switch`].
+    /// In [`schedule_tail`], the finishing touches of the schedule is done in the
+    /// new chosen thread, including releasing a dead thread's resources.
+    ///
+    /// 3. Get back from the other thread and restore the intr setting.
+    pub fn schedule(&self) {
+        let old = interrupt::set(false);
 
         let next = self.scheduler.lock().schedule();
 

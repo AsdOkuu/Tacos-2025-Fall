@@ -77,6 +77,7 @@ pub extern "C" fn trap_handler(frame: &mut Frame) {
             sbi::timer::tick();
             unsafe { riscv::register::sstatus::set_sie() };
             thread::destroy();
+            thread::timer_wake();
             thread::schedule();
         }
 
