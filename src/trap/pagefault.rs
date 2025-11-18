@@ -1,7 +1,8 @@
+use crate::mem::palloc::UserPool;
 use crate::mem::userbuf::{
     __knrl_read_usr_byte_pc, __knrl_read_usr_exit, __knrl_write_usr_byte_pc, __knrl_write_usr_exit,
 };
-use crate::mem::PageTable;
+use crate::mem::{PTEFlags, PageAlign, PageTable, PhysAddr, PG_SIZE};
 use crate::thread::{self};
 use crate::trap::Frame;
 use crate::userproc;
@@ -53,12 +54,29 @@ pub fn handler(frame: &mut Frame, fault: Exception, addr: usize) {
             }
         }
         SPP::User => {
-            kprintln!(
-                "User thread {} {} dying due to page fault.",
-                thread::current().name(),
-                thread::current().id()
-            );
-            userproc::exit(-1);
+            if addr >= frame.x[2] {
+                let va = unsafe { UserPool::alloc_pages(1) };
+                let pa = PhysAddr::from(va);
+                let entry_addr = PageAlign::floor(addr);
+                let flags = PTEFlags::V | PTEFlags::R | PTEFlags::W | PTEFlags::U;
+
+                thread::current()
+                    .pagetable
+                    .as_ref()
+                    .unwrap()
+                    .lock()
+                    .map(pa, entry_addr, PG_SIZE, flags);
+
+                #[cfg(feature = "debug")]
+                kprintln!(
+                    "[USERPROC] User Stack Grow: (k){:p} -> (u) {:#x}",
+                    stack_va,
+                    stack_page_begin
+                );
+            } else {
+                kprintln!("Invalid access at address {:#x}, exiting process.", addr);
+                userproc::exit(-1);
+            }
         }
     }
 }
