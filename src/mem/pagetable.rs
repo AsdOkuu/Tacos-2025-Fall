@@ -186,16 +186,16 @@ impl PageTable {
         while start < end {
             if let Some(pte) = self.get_pte(start) {
                 if pte.is_valid() {
+                    let va = pte.pa().into_va();
                     if pte.is_dirty() {
                         let size = min(PG_SIZE, end - start);
                         fd.seek(SeekFrom::Start((start - va) as usize)).unwrap();
                         unsafe {
-                            let buf = start as *const [u8; PG_SIZE];
+                            let buf = va as *mut [u8; PG_SIZE];
                             fd.write(&((*buf)[..size])).unwrap();
                         }
                     }
-                    let pa = pte.pa().into_va();
-                    UserPool::dealloc_pages(pa as *mut _, 1);
+                    UserPool::dealloc_pages(va as *mut _, 1);
                     self.entries[Self::px(2, start)].set_invalid();
                 }
             }

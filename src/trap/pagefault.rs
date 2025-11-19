@@ -55,6 +55,9 @@ pub fn handler(frame: &mut Frame, fault: Exception, addr: usize) {
             }
         }
         SPP::User => {
+            if thread::current().userproc.is_none() {
+                panic!("User page fault with no userproc");
+            }
             let init_sp = thread::current().userproc.as_ref().unwrap().init_sp;
             if addr < init_sp && addr + MAX_USER_STACK >= init_sp && addr >= frame.x[2] {
                 // Stack growth
@@ -98,7 +101,7 @@ pub fn handler(frame: &mut Frame, fault: Exception, addr: usize) {
                             .lock()
                             .map(pa, entry_addr, PG_SIZE, flags);
                         unsafe {
-                            let buf = entry_addr as *mut [u8; PG_SIZE];
+                            let buf = va as *mut [u8; PG_SIZE];
                             mmap.fd.lock().read(&mut *buf).unwrap();
                         }
                         return;
