@@ -5,7 +5,8 @@ use crate::mem::userbuf::{
 use crate::mem::{PTEFlags, PageAlign, PageTable, PhysAddr, MAX_USER_STACK, PG_SIZE};
 use crate::thread::{self};
 use crate::trap::Frame;
-use crate::userproc;
+use crate::userproc::{self};
+use io::Read;
 
 use riscv::register::scause::Exception::{self, *};
 use riscv::register::sstatus::{self, SPP};
@@ -56,6 +57,7 @@ pub fn handler(frame: &mut Frame, fault: Exception, addr: usize) {
         SPP::User => {
             let init_sp = thread::current().userproc.as_ref().unwrap().init_sp;
             if addr < init_sp && addr + MAX_USER_STACK >= init_sp && addr >= frame.x[2] {
+                // Stack growth
                 let va = unsafe { UserPool::alloc_pages(1) };
                 let pa = PhysAddr::from(va);
                 let entry_addr = PageAlign::floor(addr);
@@ -75,6 +77,33 @@ pub fn handler(frame: &mut Frame, fault: Exception, addr: usize) {
                     stack_page_begin
                 );
             } else {
+                for mmap in thread::current()
+                    .userproc
+                    .as_ref()
+                    .unwrap()
+                    .mmap_table
+                    .lock()
+                    .values()
+                {
+                    if addr >= mmap.addr && addr < mmap.addr + mmap.length {
+                        // mmap region access
+                        let va = unsafe { UserPool::alloc_pages(1) };
+                        let pa = PhysAddr::from(va);
+                        let entry_addr = PageAlign::floor(addr);
+                        let flags = PTEFlags::V | PTEFlags::R | PTEFlags::W | PTEFlags::U;
+                        thread::current()
+                            .pagetable
+                            .as_ref()
+                            .unwrap()
+                            .lock()
+                            .map(pa, entry_addr, PG_SIZE, flags);
+                        unsafe {
+                            let buf = entry_addr as *mut [u8; PG_SIZE];
+                            mmap.fd.lock().read(&mut *buf).unwrap();
+                        }
+                        return;
+                    }
+                }
                 kprintln!("Invalid access at address {:#x}, exiting process.", addr);
                 userproc::exit(-1);
             }

@@ -14,6 +14,7 @@ use core::{mem::size_of, str::from_utf8};
 use crate::io::{Read, Seek, SeekFrom, Write};
 use crate::sbi::console_getchar;
 use crate::sync::Mutex;
+use crate::userproc::{add_mmap_entry, remove_mmap_entry};
 use crate::{
     fs::{disk::DISKFS, FileSys},
     sbi::shutdown,
@@ -436,6 +437,46 @@ pub fn syscall_handler(_id: usize, _args: [usize; 3]) -> isize {
                     0
                 }
             }
+        }
+        SYS_MMAP => {
+            if current().pagetable.is_none() {
+                return -1;
+            }
+            let fd = _args[0];
+            let addr = _args[1];
+            match fd {
+                0 | 1 | 2 => -1,
+                fd => {
+                    if current().userproc.is_none() {
+                        return -1;
+                    }
+                    let cur = current();
+                    let fdlist = cur.userproc.as_ref().unwrap().fdlist.lock();
+                    let file = match fdlist.get(fd - 3) {
+                        Some(Some(f)) => f.lock(),
+                        _ => return -1,
+                    };
+                    match file.len() {
+                        Ok(0) | Err(_) => return -1,
+                        _ => {}
+                    };
+                    match add_mmap_entry(addr, file.clone()) {
+                        Some(mmap_addr) => mmap_addr as isize,
+                        None => -1,
+                    }
+                }
+            }
+        }
+        SYS_MUNMAP => {
+            let id = _args[0];
+            if current().pagetable.is_none() {
+                return -1;
+            }
+            if current().userproc.is_none() {
+                return -1;
+            }
+            remove_mmap_entry(id);
+            0
         }
         _ => -1,
     }

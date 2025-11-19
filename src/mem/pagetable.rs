@@ -21,9 +21,12 @@
 
 mod entry;
 
+use core::cmp::min;
 use core::ptr;
 use core::{arch::asm, mem::transmute};
 
+use crate::fs::File;
+use crate::io::{Seek, SeekFrom, Write};
 use crate::mem::{
     layout::{MMIO_BASE, PLIC_BASE, VM_BASE},
     malloc::{kalloc, kfree},
@@ -161,6 +164,43 @@ impl PageTable {
         }
 
         (va >> px_shift(level)) & Self::PX_MASK
+    }
+
+    pub fn check_available(&self, va: usize, length: usize) -> bool {
+        let mut start = va;
+        let end = va + length;
+        while start < end {
+            if let Some(pte) = self.get_pte(start) {
+                if pte.is_valid() {
+                    return false;
+                }
+            }
+            start += PG_SIZE;
+        }
+        true
+    }
+
+    pub unsafe fn unmapping(&mut self, va: usize, length: usize, fd: &mut File) {
+        let mut start = va;
+        let end = va + length;
+        while start < end {
+            if let Some(pte) = self.get_pte(start) {
+                if pte.is_valid() {
+                    if pte.is_dirty() {
+                        let size = min(PG_SIZE, end - start);
+                        fd.seek(SeekFrom::Start((start - va) as usize)).unwrap();
+                        unsafe {
+                            let buf = start as *const [u8; PG_SIZE];
+                            fd.write(&((*buf)[..size])).unwrap();
+                        }
+                    }
+                    let pa = pte.pa().into_va();
+                    UserPool::dealloc_pages(pa as *mut _, 1);
+                    self.entries[Self::px(2, start)].set_invalid();
+                }
+            }
+            start += PG_SIZE;
+        }
     }
 }
 

@@ -3,27 +3,37 @@
 
 mod load;
 
+use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::arch::asm;
 use core::iter::zip;
 use core::mem::{size_of, MaybeUninit};
+use core::ops::DerefMut;
 use riscv::register::sstatus;
 
 use crate::fs::File;
+use crate::io::Seek;
 use crate::mem::pagetable::KernelPgTable;
-use crate::mem::PG_SIZE;
+use crate::mem::{PageAlign, PG_SIZE};
 use crate::sbi::interrupt::set;
 use crate::sync::Mutex;
 use crate::sync::Semaphore;
 use crate::thread::{self, current};
 use crate::trap::{trap_exit_u, Frame};
 
+pub struct MMapTableEntry {
+    pub addr: usize,
+    pub length: usize,
+    pub fd: Mutex<File>,
+}
+
 pub struct UserProc {
     #[allow(dead_code)]
     bin: File,
     pub init_sp: usize,
+    pub mmap_table: Mutex<BTreeMap<usize, MMapTableEntry>>,
     status: Mutex<Option<isize>>,
     wait: Mutex<Option<(Arc<Semaphore>, Arc<Semaphore>)>>,
     pub fdlist: Mutex<Vec<Option<Mutex<File>>>>,
@@ -35,11 +45,104 @@ impl UserProc {
         Self {
             bin: file,
             init_sp,
+            mmap_table: Mutex::new(BTreeMap::new()),
             status: Mutex::new(None),
             wait: Mutex::new(None),
             fdlist: Mutex::new(Vec::new()),
             exited: Mutex::new(false),
         }
+    }
+}
+
+/// Map fd in memory addr.
+pub fn add_mmap_entry(addr: usize, fd: File) -> Option<usize> {
+    let length = fd.len().unwrap();
+    if length == 0
+        || !addr.is_aligned()
+        || !current()
+            .pagetable
+            .as_ref()
+            .unwrap()
+            .lock()
+            .check_available(addr, length)
+    {
+        return None;
+    }
+    // Check overlap between existing mappings
+    for entry in current()
+        .userproc
+        .as_ref()
+        .unwrap()
+        .mmap_table
+        .lock()
+        .values()
+    {
+        let entry_start = entry.addr;
+        let entry_end = entry.addr + entry.length;
+        let end = addr + length;
+        if !(end <= entry_start || addr >= entry_end) {
+            return None;
+        }
+    }
+    let mut id = 0;
+    while current()
+        .userproc
+        .as_ref()
+        .unwrap()
+        .mmap_table
+        .lock()
+        .contains_key(&id)
+    {
+        id += 1;
+    }
+
+    let entry = MMapTableEntry {
+        addr,
+        length,
+        fd: Mutex::new(fd),
+    };
+    current()
+        .userproc
+        .as_ref()
+        .unwrap()
+        .mmap_table
+        .lock()
+        .insert(id, entry);
+    Some(id)
+}
+
+pub fn remove_mmap_entry(id: usize) {
+    let entry = current()
+        .userproc
+        .as_ref()
+        .unwrap()
+        .mmap_table
+        .lock()
+        .remove(&id)
+        .unwrap();
+    let addr = entry.addr;
+    let length = entry.length;
+    unsafe {
+        current().pagetable.as_ref().unwrap().lock().unmapping(
+            addr,
+            length,
+            entry.fd.lock().deref_mut(),
+        );
+    }
+}
+
+pub fn remove_all_mmap_entries() {
+    let entries: Vec<usize> = current()
+        .userproc
+        .as_ref()
+        .unwrap()
+        .mmap_table
+        .lock()
+        .keys()
+        .cloned()
+        .collect();
+    for id in entries {
+        remove_mmap_entry(id);
     }
 }
 
@@ -141,6 +244,7 @@ pub fn exit(_value: isize) -> ! {
         current().id(),
         _value
     );
+    remove_all_mmap_entries();
     *current().userproc.as_ref().unwrap().exited.lock() = true;
     thread::exit();
 }
