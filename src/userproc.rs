@@ -23,6 +23,7 @@ use crate::trap::{trap_exit_u, Frame};
 pub struct UserProc {
     #[allow(dead_code)]
     bin: File,
+    pub init_sp: usize,
     status: Mutex<Option<isize>>,
     wait: Mutex<Option<(Arc<Semaphore>, Arc<Semaphore>)>>,
     pub fdlist: Mutex<Vec<Option<Mutex<File>>>>,
@@ -30,9 +31,10 @@ pub struct UserProc {
 }
 
 impl UserProc {
-    pub fn new(file: File) -> Self {
+    pub fn new(file: File, init_sp: usize) -> Self {
         Self {
             bin: file,
+            init_sp,
             status: Mutex::new(None),
             wait: Mutex::new(None),
             fdlist: Mutex::new(Vec::new()),
@@ -69,7 +71,7 @@ pub fn execute(mut file: File, argv: Vec<String>) -> isize {
     };
 
     // Here the new process will be created.
-    let userproc = UserProc::new(file);
+    let userproc = UserProc::new(file, exec_info.init_sp);
 
     // Initialize frame, pass argument to user.
     let mut frame = unsafe { MaybeUninit::<Frame>::zeroed().assume_init() };

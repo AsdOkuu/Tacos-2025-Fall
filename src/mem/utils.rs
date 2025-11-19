@@ -7,7 +7,7 @@ use crate::mem::layout::VM_OFFSET;
 pub const PG_SHIFT: usize = 12;
 pub const PG_MASK: usize = (1 << PG_SHIFT) - 1;
 pub const PG_SIZE: usize = 1 << PG_SHIFT;
-
+pub const MAX_USER_STACK: usize = PG_SIZE << 11;
 /// Physical Address
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PhysAddr(usize);

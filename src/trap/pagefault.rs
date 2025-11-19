@@ -2,7 +2,7 @@ use crate::mem::palloc::UserPool;
 use crate::mem::userbuf::{
     __knrl_read_usr_byte_pc, __knrl_read_usr_exit, __knrl_write_usr_byte_pc, __knrl_write_usr_exit,
 };
-use crate::mem::{PTEFlags, PageAlign, PageTable, PhysAddr, PG_SIZE};
+use crate::mem::{PTEFlags, PageAlign, PageTable, PhysAddr, MAX_USER_STACK, PG_SIZE};
 use crate::thread::{self};
 use crate::trap::Frame;
 use crate::userproc;
@@ -54,7 +54,8 @@ pub fn handler(frame: &mut Frame, fault: Exception, addr: usize) {
             }
         }
         SPP::User => {
-            if addr >= frame.x[2] {
+            let init_sp = thread::current().userproc.as_ref().unwrap().init_sp;
+            if addr < init_sp && addr + MAX_USER_STACK >= init_sp && addr >= frame.x[2] {
                 let va = unsafe { UserPool::alloc_pages(1) };
                 let pa = PhysAddr::from(va);
                 let entry_addr = PageAlign::floor(addr);

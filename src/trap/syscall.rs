@@ -33,6 +33,8 @@ const SYS_SEEK: usize = 9;
 const SYS_TELL: usize = 10;
 const SYS_CLOSE: usize = 11;
 const SYS_FSTAT: usize = 12;
+const SYS_MMAP: usize = 13;
+const SYS_MUNMAP: usize = 14;
 
 fn get_u8array_checked(mut ptr: usize, size: usize) -> Result<Vec<u8>, ()> {
     let mut raw = Vec::new();
