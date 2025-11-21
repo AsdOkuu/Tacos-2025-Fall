@@ -239,7 +239,9 @@ impl Virtio {
     /// read_sector(0, &mut buf);   // Read from sector 0.
     /// ```
     pub fn read_sector(sector: u64, buf: &mut [u8; SECTOR_SIZE]) {
+        kprintln!("get lock");
         Virtio::get().lock().read_sector_impl(sector, buf);
+        kprintln!("release lock");
     }
 
     /// Write a sector to virtio block device.
@@ -250,7 +252,9 @@ impl Virtio {
     /// write_sector(0, &mut buf);  // Write to sector 0.
     /// ```
     pub fn write_sector(sector: u64, buf: &[u8; SECTOR_SIZE]) {
+        kprintln!("get lock");
         Virtio::get().lock().write_sector_impl(sector, buf);
+        kprintln!("release lock");
     }
 }
 

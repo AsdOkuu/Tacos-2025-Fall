@@ -11,7 +11,7 @@ use crate::Result;
 /// ## Return
 /// - `Ok(byte)`
 /// - `Err`: A page fault happened.
-fn read_user_byte(user_src: *const u8) -> Result<u8> {
+pub fn read_user_byte(user_src: *const u8) -> Result<u8> {
     if in_kernel_space(user_src as usize) {
         return Err(OsError::BadPtr);
     }
@@ -31,7 +31,7 @@ fn read_user_byte(user_src: *const u8) -> Result<u8> {
 /// ## Return
 /// - `Ok(())`
 /// - `Err`: A page fault happened.
-fn write_user_byte(user_src: *const u8, value: u8) -> Result<()> {
+pub fn write_user_byte(user_src: *const u8, value: u8) -> Result<()> {
     if in_kernel_space(user_src as usize) {
         return Err(OsError::BadPtr);
     }

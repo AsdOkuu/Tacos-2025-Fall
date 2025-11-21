@@ -87,6 +87,14 @@ impl Entry {
         self.flag().contains(PTEFlags::A)
     }
 
+    pub fn is_user_readable(&self) -> bool {
+        self.flag().contains(PTEFlags::U | PTEFlags::R)
+    }
+
+    pub fn is_user_writable(&self) -> bool {
+        self.flag().contains(PTEFlags::U | PTEFlags::W)
+    }
+
     // TODO: should implement in pagetable, and re-activate
     pub fn set_invalid(&mut self) {
         self.0 &= !PTEFlags::V.bits;

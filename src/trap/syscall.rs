@@ -8,19 +8,24 @@
 /* -------------------------------------------------------------------------- */
 
 use alloc::string::{String, ToString};
+use alloc::vec;
 use alloc::vec::Vec;
 use core::{mem::size_of, str::from_utf8};
 
 use crate::io::{Read, Seek, SeekFrom, Write};
+use crate::mem::userbuf::read_user_byte;
+use crate::mem::userbuf::write_user_byte;
 use crate::sbi::console_getchar;
 use crate::sync::Mutex;
 use crate::userproc::{add_mmap_entry, remove_mmap_entry};
+use crate::Result;
 use crate::{
     fs::{disk::DISKFS, FileSys},
     sbi::shutdown,
     thread::current,
     userproc::{execute, exit, wait},
 };
+use OsError;
 
 const SYS_HALT: usize = 1;
 const SYS_EXIT: usize = 2;
@@ -37,24 +42,16 @@ const SYS_FSTAT: usize = 12;
 const SYS_MMAP: usize = 13;
 const SYS_MUNMAP: usize = 14;
 
-fn get_u8array_checked(mut ptr: usize, size: usize) -> Result<Vec<u8>, ()> {
+fn get_u8array_checked(mut ptr: usize, size: usize) -> Result<Vec<u8>> {
     let mut raw = Vec::new();
     let mut len = size;
     while len > 0 {
-        match current().pagetable.as_ref().unwrap().lock().get_pte(ptr) {
-            None => return Err(()),
-            Some(pte) => {
-                if !pte.is_valid() || !pte.is_readable() || !pte.is_user() {
-                    return Err(());
-                }
-            }
-        }
-        let ch = unsafe { *(ptr as *const u8) };
+        let ch = read_user_byte(ptr as *const u8)?;
         raw.push(ch);
 
         let newptr = ptr.checked_add(1);
         if newptr.is_none() {
-            return Err(());
+            return Err(OsError::BadPtr);
         }
         ptr = newptr.unwrap();
         len -= 1;
@@ -63,18 +60,10 @@ fn get_u8array_checked(mut ptr: usize, size: usize) -> Result<Vec<u8>, ()> {
     Ok(raw)
 }
 
-fn get_string_checked(mut ptr: usize) -> Result<String, ()> {
+fn get_string_checked(mut ptr: usize) -> Result<String> {
     let mut raw = Vec::new();
     loop {
-        match current().pagetable.as_ref().unwrap().lock().get_pte(ptr) {
-            None => return Err(()),
-            Some(pte) => {
-                if !pte.is_valid() || !pte.is_readable() || !pte.is_user() {
-                    return Err(());
-                }
-            }
-        }
-        let ch = unsafe { *(ptr as *const u8) };
+        let ch = read_user_byte(ptr as *const u8)?;
 
         if ch == 0 {
             break;
@@ -83,14 +72,14 @@ fn get_string_checked(mut ptr: usize) -> Result<String, ()> {
 
         let newptr = ptr.checked_add(1);
         if newptr.is_none() {
-            return Err(());
+            return Err(OsError::BadPtr);
         }
         ptr = newptr.unwrap();
     }
 
     let s = from_utf8(&raw);
     if s.is_err() {
-        return Err(());
+        return Err(OsError::UnknownFormat);
     }
     Ok(s.unwrap().to_string())
 }
@@ -200,22 +189,14 @@ pub fn syscall_handler(_id: usize, _args: [usize; 3]) -> isize {
             let fd = _args[0];
             let buf = _args[1] as *mut u8;
             let size = _args[2];
-            // check buf
-            for i in 0..size {
-                match current()
-                    .pagetable
-                    .as_ref()
-                    .unwrap()
-                    .lock()
-                    .get_pte(buf as usize + i)
-                {
-                    None => return -1,
-                    Some(pte) => {
-                        if !pte.is_valid() || !pte.is_writable() || !pte.is_user() {
-                            return -1;
-                        }
-                    }
-                }
+            kprintln!(
+                "sys_read called, fd: {}, ptr: {:#x}, size: {}",
+                fd,
+                _args[1],
+                size
+            );
+            if get_u8array_checked(_args[1], size).is_err() {
+                return -1;
             }
             match fd {
                 0 => {
@@ -223,7 +204,9 @@ pub fn syscall_handler(_id: usize, _args: [usize; 3]) -> isize {
                     for i in 0..size {
                         let ch = console_getchar();
                         unsafe {
-                            *(buf.add(i) as *mut u8) = ch as u8;
+                            if write_user_byte(buf.add(i) as *const u8, ch as u8).is_err() {
+                                return -1;
+                            }
                         }
                     }
                     size as isize
@@ -242,9 +225,19 @@ pub fn syscall_handler(_id: usize, _args: [usize; 3]) -> isize {
                         Some(Some(f)) => f.lock(),
                         _ => return -1,
                     };
-
-                    match file.read(unsafe { core::slice::from_raw_parts_mut(buf, size) }) {
-                        Ok(n) => n as isize,
+                    let mut sysbuf = vec![0u8; size];
+                    match file.read(&mut sysbuf) {
+                        Ok(n) => {
+                            for i in 0..n {
+                                unsafe {
+                                    if write_user_byte(buf.add(i) as *const u8, sysbuf[i]).is_err()
+                                    {
+                                        return -1;
+                                    }
+                                }
+                            }
+                            n as isize
+                        }
                         Err(_) => -1,
                     }
                 }
@@ -256,10 +249,22 @@ pub fn syscall_handler(_id: usize, _args: [usize; 3]) -> isize {
             }
             let fd = _args[0];
             let size = _args[2];
+            if fd > 2 {
+                kprintln!(
+                    "sys_write called, fd: {}, ptr: {:#x}, size: {}",
+                    fd,
+                    _args[1],
+                    size
+                );
+            }
+
             let s = match get_u8array_checked(_args[1], size) {
                 Ok(n) => n,
                 Err(_) => return -1,
             };
+            if fd > 2 {
+                kprintln!("ok");
+            }
             match fd {
                 0 => {
                     // stdin
@@ -280,11 +285,12 @@ pub fn syscall_handler(_id: usize, _args: [usize; 3]) -> isize {
                         Some(Some(f)) => f.lock(),
                         _ => return -1,
                     };
-                    match file
-                        .write(unsafe { core::slice::from_raw_parts(_args[1] as *const u8, size) })
-                    {
+                    match file.write(&s) {
                         Ok(n) => n as isize,
-                        Err(_) => -1,
+                        Err(_) => {
+                            kprintln!("write err");
+                            -1
+                        }
                     }
                 }
             }

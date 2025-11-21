@@ -136,11 +136,17 @@ impl File {
     pub fn deny_read(&mut self) {
         self.deny_read = true;
     }
+
+    pub fn allow_write(&mut self) {
+        self.deny_write = false;
+        self.vnode.allow_write();
+    }
 }
 
 impl Drop for File {
     fn drop(&mut self) {
         if self.deny_write {
+            kprintln!("File: allow write on drop");
             self.vnode.allow_write();
         }
     }

@@ -254,6 +254,7 @@ impl Vnode for Inode {
     }
 
     fn write_at(&self, buf: &[u8], mut off: usize) -> Result<usize> {
+        kprintln!("Inode write_at called: off={}, len={}", off, buf.len());
         if self.0.lock().0.deny_write > 0 {
             return Err(OsError::InvalidFileMode);
         }
@@ -265,9 +266,12 @@ impl Vnode for Inode {
         // to avoid being resized by other threads.
         let mut guard = self.0.lock();
         let (desc, data) = &mut *guard;
+        kprintln!("Inode lock acquired for write_at");
 
         let mut start = data.inner.start;
         let mut len = data.inner.len as usize;
+
+        kprintln!("buf len: {}, off: {}, inode len: {}", buf.len(), off, len);
 
         if len < off + buf.len() {
             let newlen = off + buf.len();
@@ -277,6 +281,12 @@ impl Vnode for Inode {
         }
 
         loop {
+            kprintln!(
+                "Inode write_at loop: off={}, bytes_written={}, buf_left={}",
+                off,
+                bytes_written,
+                buf_left
+            );
             let sector = start as usize + off / SECTOR_SIZE;
             let sector_offset = off % SECTOR_SIZE;
 
@@ -289,6 +299,14 @@ impl Vnode for Inode {
 
             let page_off = (buf.as_ptr() as usize + bytes_written) & PG_MASK;
 
+            kprintln!(
+                "Inode write_at loop: sector={}, sector_offset={}, chunk_size={}, page_off={}",
+                sector,
+                sector_offset,
+                chunk_size,
+                page_off
+            );
+
             if (chunk_size == SECTOR_SIZE) && (page_off <= PG_SIZE - SECTOR_SIZE) {
                 // Virtio only supports kernel buffers.
                 // So we need to convert the possible user buffer into kernel buffer.
@@ -300,18 +318,32 @@ impl Vnode for Inode {
                     .unwrap();
                 Virtio::write_sector(sector as _, buf_kvm);
             } else {
+                kprintln!(
+                    "Inode write_at loop: using bounce buffer for sector {}, offset {}",
+                    sector,
+                    sector_offset
+                );
                 // We need a bounce buffer, preserving old bytes which should not be written.
                 let mut bounce = [0; SECTOR_SIZE];
+                kprintln!("ok");
                 Virtio::read_sector(sector as _, &mut bounce);
                 bounce[sector_offset..sector_offset + chunk_size]
                     .copy_from_slice(&buf[bytes_written..bytes_written + chunk_size]);
                 Virtio::write_sector(sector as _, &bounce);
             }
 
+            kprintln!(
+                "Inode write_at loop end: wrote chunk_size={}, off={}",
+                chunk_size,
+                off
+            );
+
             buf_left -= chunk_size;
             off += chunk_size;
             bytes_written += chunk_size;
         }
+
+        kprintln!("Inode write_at finished: bytes_written={}", bytes_written);
 
         Ok(bytes_written)
     }

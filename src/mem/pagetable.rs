@@ -22,10 +22,10 @@
 mod entry;
 
 use core::cmp::min;
+use core::ops::DerefMut;
 use core::ptr;
 use core::{arch::asm, mem::transmute};
 
-use crate::fs::File;
 use crate::io::{Seek, SeekFrom, Write};
 use crate::mem::{
     layout::{MMIO_BASE, PLIC_BASE, VM_BASE},
@@ -35,6 +35,7 @@ use crate::mem::{
 };
 use crate::mem::{KERN_BASE, PG_SHIFT, VM_OFFSET};
 use crate::sync::OnceCell;
+use crate::userproc::MMapTableEntry;
 
 pub use self::entry::*;
 
@@ -180,19 +181,37 @@ impl PageTable {
         true
     }
 
-    pub unsafe fn unmapping(&mut self, va: usize, length: usize, fd: &mut File) {
-        let mut start = va;
-        let end = va + length;
+    pub unsafe fn unmapping(&mut self, mut entry: MMapTableEntry) {
+        let mut start = entry.addr;
+        let end = start + entry.pages * PG_SIZE;
+        let map_end = start + entry.length;
         while start < end {
+            kprintln!("Unmapping addr: {:#x}", start);
             if let Some(pte) = self.get_pte(start) {
                 if pte.is_valid() {
                     let va = pte.pa().into_va();
-                    if pte.is_dirty() {
-                        let size = min(PG_SIZE, end - start);
-                        fd.seek(SeekFrom::Start((start - va) as usize)).unwrap();
+                    if entry.writeback && start < map_end && pte.is_dirty() {
+                        let size = min(PG_SIZE, map_end - start);
+
+                        kprintln!(
+                            "size: {}, offset: {}, start: {}, va: {}, seek: {}",
+                            size,
+                            entry.offset,
+                            start,
+                            entry.addr,
+                            (entry.offset + start - entry.addr) as usize
+                        );
                         unsafe {
                             let buf = va as *mut [u8; PG_SIZE];
-                            fd.write(&((*buf)[..size])).unwrap();
+                            entry
+                                .fd
+                                .seek(SeekFrom::Start(
+                                    (entry.offset + start - entry.addr) as usize,
+                                ))
+                                .unwrap();
+                            kprintln!("Writing back mmap region: {}", (*buf)[0]);
+                            entry.fd.write(&((*buf)[..size])).unwrap();
+                            kprintln!("Wrote back mmap region");
                         }
                     }
                     UserPool::dealloc_pages(va as *mut _, 1);
@@ -201,6 +220,7 @@ impl PageTable {
             }
             start += PG_SIZE;
         }
+        kprintln!("Unmapped mmap region: addr={:#x}", entry.addr);
     }
 }
 

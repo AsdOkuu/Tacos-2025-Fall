@@ -10,13 +10,12 @@ use alloc::vec::Vec;
 use core::arch::asm;
 use core::iter::zip;
 use core::mem::{size_of, MaybeUninit};
-use core::ops::DerefMut;
 use riscv::register::sstatus;
 
 use crate::fs::File;
 use crate::io::Seek;
 use crate::mem::pagetable::KernelPgTable;
-use crate::mem::{PageAlign, PG_SIZE};
+use crate::mem::{div_round_up, PTEFlags, PageAlign, PG_SIZE};
 use crate::sbi::interrupt::set;
 use crate::sync::Mutex;
 use crate::sync::Semaphore;
@@ -26,12 +25,16 @@ use crate::trap::{trap_exit_u, Frame};
 pub struct MMapTableEntry {
     pub addr: usize,
     pub length: usize,
-    pub fd: Mutex<File>,
+    pub pages: usize,
+    pub fd: File,
+    pub flags: PTEFlags,
+    pub offset: usize,
+    pub writeback: bool,
 }
 
 pub struct UserProc {
     #[allow(dead_code)]
-    bin: File,
+    bin: Mutex<File>,
     pub init_sp: usize,
     pub mmap_table: Mutex<BTreeMap<usize, MMapTableEntry>>,
     status: Mutex<Option<isize>>,
@@ -41,11 +44,11 @@ pub struct UserProc {
 }
 
 impl UserProc {
-    pub fn new(file: File, init_sp: usize) -> Self {
+    pub fn new(file: File, init_sp: usize, mmap_table: BTreeMap<usize, MMapTableEntry>) -> Self {
         Self {
-            bin: file,
+            bin: Mutex::new(file),
             init_sp,
-            mmap_table: Mutex::new(BTreeMap::new()),
+            mmap_table: Mutex::new(mmap_table),
             status: Mutex::new(None),
             wait: Mutex::new(None),
             fdlist: Mutex::new(Vec::new()),
@@ -99,7 +102,11 @@ pub fn add_mmap_entry(addr: usize, fd: File) -> Option<usize> {
     let entry = MMapTableEntry {
         addr,
         length,
-        fd: Mutex::new(fd),
+        pages: div_round_up(length, PG_SIZE),
+        fd,
+        flags: PTEFlags::V | PTEFlags::R | PTEFlags::W | PTEFlags::U,
+        offset: 0,
+        writeback: true,
     };
     current()
         .userproc
@@ -120,14 +127,13 @@ pub fn remove_mmap_entry(id: usize) {
         .lock()
         .remove(&id)
         .unwrap();
-    let addr = entry.addr;
-    let length = entry.length;
     unsafe {
-        current().pagetable.as_ref().unwrap().lock().unmapping(
-            addr,
-            length,
-            entry.fd.lock().deref_mut(),
-        );
+        current()
+            .pagetable
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unmapping(entry);
     }
 }
 
@@ -165,7 +171,7 @@ pub fn execute(mut file: File, argv: Vec<String>) -> isize {
     // switch pagetables.
     let mut pt = KernelPgTable::clone();
 
-    let exec_info = match load::load_executable(&mut file, &mut pt) {
+    let (exec_info, mmap_table) = match load::lazy_load_executable(&mut file, &mut pt) {
         Ok(x) => x,
         Err(_) => unsafe {
             pt.destroy();
@@ -174,7 +180,7 @@ pub fn execute(mut file: File, argv: Vec<String>) -> isize {
     };
 
     // Here the new process will be created.
-    let userproc = UserProc::new(file, exec_info.init_sp);
+    let userproc = UserProc::new(file, exec_info.init_sp, mmap_table);
 
     // Initialize frame, pass argument to user.
     let mut frame = unsafe { MaybeUninit::<Frame>::zeroed().assume_init() };
@@ -221,6 +227,13 @@ pub fn exit(_value: isize) -> ! {
         "Current thread doesn't own a user process."
     );
 
+    current()
+        .userproc
+        .as_ref()
+        .unwrap()
+        .bin
+        .lock()
+        .allow_write();
     *current().userproc.as_ref().unwrap().status.lock() = Some(_value);
 
     // Wake waiting thread up.
@@ -339,6 +352,7 @@ pub fn wait(_tid: isize) -> Option<isize> {
         current().child.lock().remove(ind);
     }
 
+    kprintln!("Wait finish.");
     return result;
 }
 
