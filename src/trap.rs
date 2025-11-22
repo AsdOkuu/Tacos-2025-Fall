@@ -105,7 +105,9 @@ pub extern "C" fn trap_handler(frame: &mut Frame) {
         Exception(f @ LoadPageFault)
         | Exception(f @ StorePageFault)
         | Exception(f @ InstructionPageFault) => {
+            let old = interrupt::set(false);
             pagefault::handler(frame, f, stval);
+            interrupt::set(old);
         }
 
         _ => {

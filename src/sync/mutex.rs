@@ -36,6 +36,7 @@ impl<T, L: Lock> Mutex<T, L> {
 
     /// Acquires a mutex, blocking the current thread until it is able to do so.
     pub fn lock(&self) -> MutexGuard<'_, T, L> {
+        // kprintln!("Mutex in");
         self.lock.acquire();
         MutexGuard(self)
     }
@@ -66,6 +67,7 @@ impl<T, L: Lock> DerefMut for MutexGuard<'_, T, L> {
 
 impl<T, L: Lock> Drop for MutexGuard<'_, T, L> {
     fn drop(&mut self) {
+        // kprintln!("Mutex out");
         self.0.lock.release();
     }
 }

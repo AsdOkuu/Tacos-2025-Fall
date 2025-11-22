@@ -10,6 +10,7 @@ mod swap;
 pub use self::path::Path;
 // Expose swap utils.
 pub use self::swap::Swap;
+pub use self::swap::SwapBitmap;
 
 use alloc::collections::BTreeMap;
 use alloc::sync::{Arc, Weak};

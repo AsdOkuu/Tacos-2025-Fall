@@ -22,11 +22,11 @@
 mod entry;
 
 use core::cmp::min;
-use core::ops::DerefMut;
 use core::ptr;
 use core::{arch::asm, mem::transmute};
 
-use crate::io::{Seek, SeekFrom, Write};
+use alloc::vec::Vec;
+
 use crate::mem::{
     layout::{MMIO_BASE, PLIC_BASE, VM_BASE},
     malloc::{kalloc, kfree},
@@ -88,6 +88,14 @@ impl PageTable {
             l1_table
                 .walk(Self::px(1, va))
                 .map(|l0_table| l0_table.entries.get(Self::px(0, va)).unwrap())
+        })
+    }
+
+    pub fn get_mut_pte(&mut self, va: usize) -> Option<&mut Entry> {
+        self.walk(Self::px(2, va)).and_then(|l1_table| {
+            l1_table
+                .walk(Self::px(1, va))
+                .map(|l0_table| l0_table.entries.get_mut(Self::px(0, va)).unwrap())
         })
     }
 
@@ -181,10 +189,16 @@ impl PageTable {
         true
     }
 
-    pub unsafe fn unmapping(&mut self, mut entry: MMapTableEntry) {
+    pub unsafe fn set_invalid(&mut self, start: usize, va: usize) {
+        UserPool::dealloc_pages(va as *mut _, 1);
+        self.entries[Self::px(2, start)].set_invalid();
+    }
+
+    pub unsafe fn unmapping(&mut self, entry: &mut MMapTableEntry) -> Vec<(usize, usize, usize)> {
         let mut start = entry.addr;
         let end = start + entry.pages * PG_SIZE;
         let map_end = start + entry.length;
+        let mut list = Vec::new();
         while start < end {
             kprintln!("Unmapping addr: {:#x}", start);
             if let Some(pte) = self.get_pte(start) {
@@ -201,26 +215,14 @@ impl PageTable {
                             entry.addr,
                             (entry.offset + start - entry.addr) as usize
                         );
-                        unsafe {
-                            let buf = va as *mut [u8; PG_SIZE];
-                            entry
-                                .fd
-                                .seek(SeekFrom::Start(
-                                    (entry.offset + start - entry.addr) as usize,
-                                ))
-                                .unwrap();
-                            kprintln!("Writing back mmap region: {}", (*buf)[0]);
-                            entry.fd.write(&((*buf)[..size])).unwrap();
-                            kprintln!("Wrote back mmap region");
-                        }
+                        list.push((start, va, size));
                     }
-                    UserPool::dealloc_pages(va as *mut _, 1);
-                    self.entries[Self::px(2, start)].set_invalid();
                 }
             }
             start += PG_SIZE;
         }
         kprintln!("Unmapped mmap region: addr={:#x}", entry.addr);
+        return list;
     }
 }
 

@@ -95,6 +95,10 @@ impl Entry {
         self.flag().contains(PTEFlags::U | PTEFlags::W)
     }
 
+    pub fn get_val(&self) -> usize {
+        self.0
+    }
+
     // TODO: should implement in pagetable, and re-activate
     pub fn set_invalid(&mut self) {
         self.0 &= !PTEFlags::V.bits;

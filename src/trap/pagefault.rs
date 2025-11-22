@@ -1,11 +1,13 @@
+use crate::fs::disk::Swap;
 use crate::io::SeekFrom;
 use crate::mem::palloc::UserPool;
 use crate::mem::userbuf::{
     __knrl_read_usr_byte_pc, __knrl_read_usr_exit, __knrl_write_usr_byte_pc, __knrl_write_usr_exit,
 };
-use crate::mem::{PTEFlags, PageAlign, PageTable, PhysAddr, MAX_USER_STACK, PG_SIZE};
+use crate::mem::{PTEFlags, PageAlign, PageTable, MAX_USER_STACK, PG_SIZE};
 use crate::thread::{self};
 use crate::trap::Frame;
+use crate::userproc::ZERO_PAGE;
 use crate::userproc::{self};
 use crate::{OsError, Result};
 use core::cmp::min;
@@ -15,24 +17,67 @@ use io::Seek;
 use riscv::register::scause::Exception::{self, *};
 use riscv::register::sstatus::{self, SPP};
 
-fn user_page_fault(frame: &mut Frame, addr: usize) -> Result<()> {
+fn user_page_fault(_frame: &mut Frame, addr: usize) -> Result<()> {
     if thread::current().userproc.is_none() {
         return Err(OsError::UserError);
     }
-    let init_sp = thread::current().userproc.as_ref().unwrap().init_sp;
-    if addr < init_sp && addr + MAX_USER_STACK >= init_sp && addr >= frame.x[2] {
-        // Stack growth
-        let va = unsafe { UserPool::alloc_pages(1) };
-        let pa = PhysAddr::from(va);
-        let entry_addr = PageAlign::floor(addr);
-        let flags = PTEFlags::V | PTEFlags::R | PTEFlags::W | PTEFlags::U;
-
-        thread::current()
-            .pagetable
+    let entry_addr = PageAlign::floor(addr);
+    let mut data = None;
+    let mut kbuf = [0u8; PG_SIZE];
+    if thread::current()
+        .userproc
+        .as_ref()
+        .unwrap()
+        .swap_table
+        .lock()
+        .contains_key(&entry_addr)
+    {
+        // 1. Move swap space out to local var 2. alloc a page
+        assert!(
+            thread::current()
+                .userproc
+                .as_ref()
+                .unwrap()
+                .swap_table
+                .lock()[&entry_addr]
+                .in_swap,
+            "Page not in swap space"
+        );
+        let page = thread::current()
+            .userproc
             .as_ref()
             .unwrap()
-            .lock()
-            .map(pa, entry_addr, PG_SIZE, flags);
+            .swap_table
+            .lock()[&entry_addr]
+            .page;
+        data = Some(
+            thread::current()
+                .userproc
+                .as_ref()
+                .unwrap()
+                .swap_table
+                .lock()[&entry_addr]
+                .flags,
+        );
+        Swap::read(page, &mut kbuf);
+    }
+    if let Some(flags) = data {
+        unsafe {
+            UserPool::alloc_page(entry_addr, flags, &kbuf);
+        }
+        return Ok(());
+    }
+    let init_sp = thread::current().userproc.as_ref().unwrap().init_sp;
+    // kprintln!("sp: {:#x}", frame.x[2]);
+    if addr < init_sp && addr + MAX_USER_STACK >= init_sp {
+        // Stack growth
+        unsafe {
+            UserPool::alloc_page(
+                PageAlign::floor(addr),
+                PTEFlags::V | PTEFlags::R | PTEFlags::W | PTEFlags::U,
+                &ZERO_PAGE,
+            );
+        }
 
         #[cfg(feature = "debug")]
         kprintln!(
@@ -41,6 +86,9 @@ fn user_page_fault(frame: &mut Frame, addr: usize) -> Result<()> {
             stack_page_begin
         );
     } else {
+        let entry_addr = PageAlign::floor(addr);
+        let mut data = None;
+        let mut kbuf = [0u8; PG_SIZE];
         for (_, mmap) in thread::current()
             .userproc
             .as_ref()
@@ -57,19 +105,8 @@ fn user_page_fault(frame: &mut Frame, addr: usize) -> Result<()> {
             );
             if addr >= mmap.addr && addr < mmap.addr + mmap.pages * PG_SIZE {
                 // mmap region access
-                let va = unsafe { UserPool::alloc_pages(1) };
-                let pa = PhysAddr::from(va);
-                let entry_addr = PageAlign::floor(addr);
-                let flags = mmap.flags;
-                thread::current()
-                    .pagetable
-                    .as_ref()
-                    .unwrap()
-                    .lock()
-                    .map(pa, entry_addr, PG_SIZE, flags);
-
                 unsafe {
-                    let buf = va as *mut [u8; PG_SIZE];
+                    let buf = kbuf.as_mut_ptr() as *mut [u8; PG_SIZE];
                     (*buf).fill(0);
                     if entry_addr < mmap.addr + mmap.length {
                         let size = min(PG_SIZE, mmap.addr + mmap.length - entry_addr);
@@ -78,13 +115,25 @@ fn user_page_fault(frame: &mut Frame, addr: usize) -> Result<()> {
                                 mmap.offset + (entry_addr - mmap.addr) as usize,
                             ))
                             .unwrap();
+                        kprintln!("read in: {}", size);
                         mmap.fd.read(&mut (*buf)[..size]).unwrap();
+                        kprintln!("read out");
                     }
                 }
-                return Ok(());
+
+                data = Some(mmap.flags);
+                break;
             }
         }
-        return Err(OsError::BadPtr);
+        if let Some(flags) = data {
+            unsafe {
+                UserPool::alloc_page(entry_addr, flags, &kbuf);
+            }
+
+            return Ok(());
+        } else {
+            return Err(OsError::BadPtr);
+        }
     }
     Ok(())
 }
@@ -101,6 +150,8 @@ pub fn handler(frame: &mut Frame, fault: Exception, addr: usize) {
     };
 
     unsafe { sstatus::set_sie() };
+
+    kprintln!("{} {}:", thread::current().name(), thread::current().id());
 
     kprintln!(
         "Page fault at {:#x}: {} error {} page in {} context.",
@@ -158,18 +209,23 @@ pub fn handler(frame: &mut Frame, fault: Exception, addr: usize) {
                 panic!("Kernel page fault");
             }
         }
-        SPP::User => match user_page_fault(frame, addr) {
-            Ok(()) => {}
-            Err(OsError::UserError) => {
-                panic!("User page fault with no userproc");
-            }
-            Err(OsError::BadPtr) => {
-                kprintln!("Invalid access at address {:#x}, exiting process.", addr);
+        SPP::User => {
+            if present {
                 userproc::exit(-1);
             }
-            _ => {
-                panic!("Unexpected user page fault error");
+            match user_page_fault(frame, addr) {
+                Ok(()) => {}
+                Err(OsError::UserError) => {
+                    panic!("User page fault with no userproc");
+                }
+                Err(OsError::BadPtr) => {
+                    kprintln!("Invalid access at address {:#x}, exiting process.", addr);
+                    userproc::exit(-1);
+                }
+                _ => {
+                    panic!("Unexpected user page fault error");
+                }
             }
-        },
+        }
     }
 }

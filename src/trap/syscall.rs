@@ -90,6 +90,7 @@ pub fn syscall_handler(_id: usize, _args: [usize; 3]) -> isize {
         SYS_HALT => shutdown(),
         SYS_EXIT => exit(_args[0] as isize),
         SYS_EXEC => {
+            kprintln!("exec!!!");
             // pagetable required.
             if current().pagetable.is_none() {
                 return -1;
@@ -108,15 +109,19 @@ pub fn syscall_handler(_id: usize, _args: [usize; 3]) -> isize {
             let mut argv = _args[1] as usize;
             let mut arglist = Vec::new();
             loop {
-                match current().pagetable.as_ref().unwrap().lock().get_pte(argv) {
-                    None => return -1,
-                    Some(pte) => {
-                        if !pte.is_valid() {
+                let mut arg = 0;
+                for i in (0..size_of::<usize>()).rev() {
+                    let byte = read_user_byte((argv + i) as *const u8).map_err(|_| -1 as isize);
+                    match byte {
+                        Ok(byte) => {
+                            arg *= 256;
+                            arg |= byte as usize;
+                        }
+                        Err(_) => {
                             return -1;
                         }
                     }
                 }
-                let arg = unsafe { *(argv as *const usize) };
                 if arg == 0 {
                     break;
                 }
@@ -133,6 +138,8 @@ pub fn syscall_handler(_id: usize, _args: [usize; 3]) -> isize {
                     None => return -1,
                 };
             }
+
+            kprintln!("check pass");
 
             execute(file, arglist)
         }
@@ -198,6 +205,7 @@ pub fn syscall_handler(_id: usize, _args: [usize; 3]) -> isize {
             if get_u8array_checked(_args[1], size).is_err() {
                 return -1;
             }
+            kprintln!("Succeed to read");
             match fd {
                 0 => {
                     // stdin
@@ -481,6 +489,7 @@ pub fn syscall_handler(_id: usize, _args: [usize; 3]) -> isize {
             if current().userproc.is_none() {
                 return -1;
             }
+            kprintln!("sys unmap");
             remove_mmap_entry(id);
             0
         }

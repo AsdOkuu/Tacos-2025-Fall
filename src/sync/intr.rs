@@ -24,6 +24,7 @@ unsafe impl Send for Intr {}
 
 impl Lock for Intr {
     fn acquire(&self) {
+        // kprintln!("Intr in");
         assert!(self.0.get().is_none());
 
         // Record the old timer status. Here setting the immutable `self` is safe
@@ -32,6 +33,7 @@ impl Lock for Intr {
     }
 
     fn release(&self) {
+        // kprintln!("Intr out");
         sbi::interrupt::set(self.0.take().expect("release before acquire"));
     }
 }

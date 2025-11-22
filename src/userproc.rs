@@ -12,8 +12,9 @@ use core::iter::zip;
 use core::mem::{size_of, MaybeUninit};
 use riscv::register::sstatus;
 
+use crate::fs::disk::SwapBitmap;
 use crate::fs::File;
-use crate::io::Seek;
+use crate::io::{Seek, SeekFrom, Write};
 use crate::mem::pagetable::KernelPgTable;
 use crate::mem::{div_round_up, PTEFlags, PageAlign, PG_SIZE};
 use crate::sbi::interrupt::set;
@@ -21,6 +22,9 @@ use crate::sync::Mutex;
 use crate::sync::Semaphore;
 use crate::thread::{self, current};
 use crate::trap::{trap_exit_u, Frame};
+use crate::userproc::load::init_user_stack;
+
+pub static ZERO_PAGE: [u8; PG_SIZE] = [0u8; PG_SIZE];
 
 pub struct MMapTableEntry {
     pub addr: usize,
@@ -32,11 +36,18 @@ pub struct MMapTableEntry {
     pub writeback: bool,
 }
 
+pub struct SwapTableEntry {
+    pub flags: PTEFlags,
+    pub page: usize,
+    pub in_swap: bool,
+}
+
 pub struct UserProc {
     #[allow(dead_code)]
     bin: Mutex<File>,
     pub init_sp: usize,
     pub mmap_table: Mutex<BTreeMap<usize, MMapTableEntry>>,
+    pub swap_table: Mutex<BTreeMap<usize, SwapTableEntry>>,
     status: Mutex<Option<isize>>,
     wait: Mutex<Option<(Arc<Semaphore>, Arc<Semaphore>)>>,
     pub fdlist: Mutex<Vec<Option<Mutex<File>>>>,
@@ -49,6 +60,7 @@ impl UserProc {
             bin: Mutex::new(file),
             init_sp,
             mmap_table: Mutex::new(mmap_table),
+            swap_table: Mutex::new(BTreeMap::new()),
             status: Mutex::new(None),
             wait: Mutex::new(None),
             fdlist: Mutex::new(Vec::new()),
@@ -59,8 +71,10 @@ impl UserProc {
 
 /// Map fd in memory addr.
 pub fn add_mmap_entry(addr: usize, fd: File) -> Option<usize> {
+    kprintln!("add mmap at: {:#x}", addr);
     let length = fd.len().unwrap();
-    if length == 0
+    if addr == 0
+        || length == 0
         || !addr.is_aligned()
         || !current()
             .pagetable
@@ -81,7 +95,7 @@ pub fn add_mmap_entry(addr: usize, fd: File) -> Option<usize> {
         .values()
     {
         let entry_start = entry.addr;
-        let entry_end = entry.addr + entry.length;
+        let entry_end = entry.addr + entry.pages * PG_SIZE;
         let end = addr + length;
         if !(end <= entry_start || addr >= entry_end) {
             return None;
@@ -119,7 +133,7 @@ pub fn add_mmap_entry(addr: usize, fd: File) -> Option<usize> {
 }
 
 pub fn remove_mmap_entry(id: usize) {
-    let entry = current()
+    let mut entry = current()
         .userproc
         .as_ref()
         .unwrap()
@@ -128,12 +142,29 @@ pub fn remove_mmap_entry(id: usize) {
         .remove(&id)
         .unwrap();
     unsafe {
-        current()
+        let list = current()
             .pagetable
             .as_ref()
             .unwrap()
             .lock()
-            .unmapping(entry);
+            .unmapping(&mut entry);
+        for (addr, va, size) in list {
+            kprintln!("addr: {}, va: {}, size: {}", addr, va, size);
+            let buf = va as *mut [u8; PG_SIZE];
+            entry
+                .fd
+                .seek(SeekFrom::Start((entry.offset + addr - entry.addr) as usize))
+                .unwrap();
+            kprintln!("Writing back mmap region: {}", (*buf)[0]);
+            entry.fd.write(&((*buf)[..size])).unwrap();
+            kprintln!("Wrote back mmap region");
+            current()
+                .pagetable
+                .as_ref()
+                .unwrap()
+                .lock()
+                .set_invalid(addr, va);
+        }
     }
 }
 
@@ -209,6 +240,13 @@ pub fn execute(mut file: File, argv: Vec<String>) -> isize {
         .pagetable(pt)
         .userproc(userproc)
         .spawn();
+    kprintln!(
+        "{} {}, {} {}",
+        current().name(),
+        current().id(),
+        child.name(),
+        child.id()
+    );
     let tid = child.id();
     current().child.lock().push(child);
     tid
@@ -257,6 +295,18 @@ pub fn exit(_value: isize) -> ! {
         current().id(),
         _value
     );
+    for entry in current()
+        .userproc
+        .as_ref()
+        .unwrap()
+        .swap_table
+        .lock()
+        .values()
+    {
+        if entry.in_swap {
+            SwapBitmap::release(entry.page);
+        }
+    }
     remove_all_mmap_entries();
     *current().userproc.as_ref().unwrap().exited.lock() = true;
     thread::exit();
@@ -269,6 +319,7 @@ pub fn exit(_value: isize) -> ! {
 /// - `None`: if tid was not created by the current thread.
 pub fn wait(_tid: isize) -> Option<isize> {
     // TODO: Lab2.
+    kprintln!("start wait");
 
     let mut result = Some(-1);
     let mut index = None;
@@ -360,6 +411,10 @@ pub fn wait(_tid: isize) -> Option<isize> {
 ///
 /// This function won't return.
 pub fn start(argv: Vec<String>, mut frame: Frame) -> ! {
+    // Initialize user stack.
+    // kprintln!("stack: {}", frame.x[2]);
+    init_user_stack(frame.x[2]);
+
     let mut pnts = Vec::new();
     let mut user_sp = frame.x[2];
 

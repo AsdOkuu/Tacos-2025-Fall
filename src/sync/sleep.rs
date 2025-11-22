@@ -22,17 +22,7 @@ impl Default for Sleep {
 
 impl Lock for Sleep {
     fn acquire(&self) {
-        if let Some(thread) = self.holder.borrow().as_ref() {
-            thread::current().wait(Arc::clone(thread));
-        }
         self.inner.down();
-        thread::current().unwait();
-        #[cfg(feature = "debug")]
-        kprintln!(
-            "[INNER] change to {} {}",
-            thread::current().name(),
-            thread::current().id()
-        );
         self.holder.borrow_mut().replace(thread::current());
     }
 
