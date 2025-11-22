@@ -17,7 +17,7 @@ use io::Seek;
 use riscv::register::scause::Exception::{self, *};
 use riscv::register::sstatus::{self, SPP};
 
-fn user_page_fault(_frame: &mut Frame, addr: usize) -> Result<()> {
+fn user_page_fault(frame: &mut Frame, addr: usize) -> Result<()> {
     if thread::current().userproc.is_none() {
         return Err(OsError::UserError);
     }
@@ -68,8 +68,13 @@ fn user_page_fault(_frame: &mut Frame, addr: usize) -> Result<()> {
         return Ok(());
     }
     let init_sp = thread::current().userproc.as_ref().unwrap().init_sp;
-    // kprintln!("sp: {:#x}", frame.x[2]);
-    if addr < init_sp && addr + MAX_USER_STACK >= init_sp {
+    let sp = if frame.x[2] > init_sp {
+        frame.x[12]
+    } else {
+        frame.x[2]
+    };
+    kprintln!("sp: {:#x}", sp);
+    if addr < init_sp && addr + MAX_USER_STACK >= init_sp && addr >= sp {
         // Stack growth
         unsafe {
             UserPool::alloc_page(

@@ -42,11 +42,11 @@ const SYS_FSTAT: usize = 12;
 const SYS_MMAP: usize = 13;
 const SYS_MUNMAP: usize = 14;
 
-fn get_u8array_checked(mut ptr: usize, size: usize) -> Result<Vec<u8>> {
+fn get_u8array_checked(mut ptr: usize, size: usize, sp: usize) -> Result<Vec<u8>> {
     let mut raw = Vec::new();
     let mut len = size;
     while len > 0 {
-        let ch = read_user_byte(ptr as *const u8)?;
+        let ch = read_user_byte(ptr as *const u8, sp)?;
         raw.push(ch);
 
         let newptr = ptr.checked_add(1);
@@ -60,10 +60,10 @@ fn get_u8array_checked(mut ptr: usize, size: usize) -> Result<Vec<u8>> {
     Ok(raw)
 }
 
-fn get_string_checked(mut ptr: usize) -> Result<String> {
+fn get_string_checked(mut ptr: usize, sp: usize) -> Result<String> {
     let mut raw = Vec::new();
     loop {
-        let ch = read_user_byte(ptr as *const u8)?;
+        let ch = read_user_byte(ptr as *const u8, sp)?;
 
         if ch == 0 {
             break;
@@ -84,7 +84,7 @@ fn get_string_checked(mut ptr: usize) -> Result<String> {
     Ok(s.unwrap().to_string())
 }
 
-pub fn syscall_handler(_id: usize, _args: [usize; 3]) -> isize {
+pub fn syscall_handler(_id: usize, _args: [usize; 3], sp: usize) -> isize {
     // TODO: LAB2 impl
     match _id {
         SYS_HALT => shutdown(),
@@ -97,7 +97,7 @@ pub fn syscall_handler(_id: usize, _args: [usize; 3]) -> isize {
             }
 
             // check file name validity.
-            let name = match get_string_checked(_args[0] as usize) {
+            let name = match get_string_checked(_args[0] as usize, sp) {
                 Ok(n) => n,
                 Err(_) => return -1,
             };
@@ -111,7 +111,7 @@ pub fn syscall_handler(_id: usize, _args: [usize; 3]) -> isize {
             loop {
                 let mut arg = 0;
                 for i in (0..size_of::<usize>()).rev() {
-                    let byte = read_user_byte((argv + i) as *const u8).map_err(|_| -1 as isize);
+                    let byte = read_user_byte((argv + i) as *const u8, sp).map_err(|_| -1 as isize);
                     match byte {
                         Ok(byte) => {
                             arg *= 256;
@@ -127,7 +127,7 @@ pub fn syscall_handler(_id: usize, _args: [usize; 3]) -> isize {
                 }
 
                 // check inner arg validity.
-                let s = match get_string_checked(arg) {
+                let s = match get_string_checked(arg, sp) {
                     Ok(s) => s,
                     Err(_) => return -1,
                 };
@@ -154,7 +154,7 @@ pub fn syscall_handler(_id: usize, _args: [usize; 3]) -> isize {
             if current().userproc.is_none() {
                 return -1;
             }
-            let name = match get_string_checked(_args[0]) {
+            let name = match get_string_checked(_args[0], sp) {
                 Ok(n) => n,
                 Err(_) => return -1,
             };
@@ -202,7 +202,7 @@ pub fn syscall_handler(_id: usize, _args: [usize; 3]) -> isize {
                 _args[1],
                 size
             );
-            if get_u8array_checked(_args[1], size).is_err() {
+            if get_u8array_checked(_args[1], size, sp).is_err() {
                 return -1;
             }
             kprintln!("Succeed to read");
@@ -212,7 +212,7 @@ pub fn syscall_handler(_id: usize, _args: [usize; 3]) -> isize {
                     for i in 0..size {
                         let ch = console_getchar();
                         unsafe {
-                            if write_user_byte(buf.add(i) as *const u8, ch as u8).is_err() {
+                            if write_user_byte(buf.add(i) as *const u8, ch as u8, sp).is_err() {
                                 return -1;
                             }
                         }
@@ -238,7 +238,8 @@ pub fn syscall_handler(_id: usize, _args: [usize; 3]) -> isize {
                         Ok(n) => {
                             for i in 0..n {
                                 unsafe {
-                                    if write_user_byte(buf.add(i) as *const u8, sysbuf[i]).is_err()
+                                    if write_user_byte(buf.add(i) as *const u8, sysbuf[i], sp)
+                                        .is_err()
                                     {
                                         return -1;
                                     }
@@ -266,7 +267,7 @@ pub fn syscall_handler(_id: usize, _args: [usize; 3]) -> isize {
                 );
             }
 
-            let s = match get_u8array_checked(_args[1], size) {
+            let s = match get_u8array_checked(_args[1], size, sp) {
                 Ok(n) => n,
                 Err(_) => return -1,
             };
@@ -304,7 +305,7 @@ pub fn syscall_handler(_id: usize, _args: [usize; 3]) -> isize {
             }
         }
         SYS_REMOVE => {
-            let name = match get_string_checked(_args[0]) {
+            let name = match get_string_checked(_args[0], sp) {
                 Ok(n) => n,
                 Err(_) => return -1,
             };

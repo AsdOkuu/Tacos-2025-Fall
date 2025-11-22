@@ -67,7 +67,7 @@ pub extern "C" fn trap_handler(frame: &mut Frame) {
             // Increase sepc by 1 to skip ecall.
             let old = interrupt::set(false);
             frame.sepc += 4;
-            frame.x[10] = syscall::syscall_handler(id, args) as usize;
+            frame.x[10] = syscall::syscall_handler(id, args, frame.x[2]) as usize;
             interrupt::set(old);
         }
 

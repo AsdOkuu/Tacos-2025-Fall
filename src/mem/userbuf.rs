@@ -11,13 +11,13 @@ use crate::Result;
 /// ## Return
 /// - `Ok(byte)`
 /// - `Err`: A page fault happened.
-pub fn read_user_byte(user_src: *const u8) -> Result<u8> {
+pub fn read_user_byte(user_src: *const u8, sp: usize) -> Result<u8> {
     if in_kernel_space(user_src as usize) {
         return Err(OsError::BadPtr);
     }
 
     let byte: u8 = 0;
-    let ret_status: u8 = unsafe { __knrl_read_usr_byte(user_src, &byte as *const u8) };
+    let ret_status: u8 = unsafe { __knrl_read_usr_byte(user_src, &byte as *const u8, sp) };
 
     if ret_status == 0 {
         Ok(byte)
@@ -31,12 +31,12 @@ pub fn read_user_byte(user_src: *const u8) -> Result<u8> {
 /// ## Return
 /// - `Ok(())`
 /// - `Err`: A page fault happened.
-pub fn write_user_byte(user_src: *const u8, value: u8) -> Result<()> {
+pub fn write_user_byte(user_src: *const u8, value: u8, sp: usize) -> Result<()> {
     if in_kernel_space(user_src as usize) {
         return Err(OsError::BadPtr);
     }
 
-    let ret_status: u8 = unsafe { __knrl_write_usr_byte(user_src, value) };
+    let ret_status: u8 = unsafe { __knrl_write_usr_byte(user_src, value, sp) };
 
     if ret_status == 0 {
         Ok(())
@@ -46,10 +46,10 @@ pub fn write_user_byte(user_src: *const u8, value: u8) -> Result<()> {
 }
 
 extern "C" {
-    pub fn __knrl_read_usr_byte(user_src: *const u8, byte_ptr: *const u8) -> u8;
+    pub fn __knrl_read_usr_byte(user_src: *const u8, byte_ptr: *const u8, sp: usize) -> u8;
     pub fn __knrl_read_usr_byte_pc();
     pub fn __knrl_read_usr_exit();
-    pub fn __knrl_write_usr_byte(user_src: *const u8, value: u8) -> u8;
+    pub fn __knrl_write_usr_byte(user_src: *const u8, value: u8, sp: usize) -> u8;
     pub fn __knrl_write_usr_byte_pc();
     pub fn __knrl_write_usr_exit();
 }

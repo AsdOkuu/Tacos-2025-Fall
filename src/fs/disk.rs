@@ -21,7 +21,11 @@ use self::inode::Inode;
 
 use super::{File, FileSys, Vnode};
 use crate::device::virtio::{Virtio, SECTOR_SIZE};
+use crate::mem::userbuf::read_user_byte;
+use crate::mem::PG_SIZE;
+use crate::mem::VM_BASE;
 use crate::sync::{Lazy, Mutex};
+use crate::thread;
 use crate::{OsError, Result};
 
 /// Inode number.
@@ -186,6 +190,27 @@ impl FileSys for DiskFs {
 
     fn remove(&self, id: Self::Path) -> Result<()> {
         let inum = self.root_dir.lock().path2inum(&id)?;
+        let mut start = None;
+        let mut end = 0;
+        for mmap in thread::current()
+            .userproc
+            .as_ref()
+            .unwrap()
+            .mmap_table
+            .lock()
+            .values()
+        {
+            if mmap.fd.inum() as u32 == inum {
+                start = Some(mmap.addr);
+                end = mmap.addr + mmap.length;
+            }
+        }
+        if let Some(mut start) = start {
+            while start < end {
+                let _ = read_user_byte(start as *const u8, VM_BASE);
+                start += PG_SIZE;
+            }
+        }
         let mut rootdir = DISKFS.root_dir.lock();
         rootdir.remove(inum)?;
         if let Some(arc) = self.inode_table.lock().get(&inum).and_then(Weak::upgrade) {
