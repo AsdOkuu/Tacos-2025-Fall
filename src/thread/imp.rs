@@ -188,9 +188,6 @@ impl Drop for Thread {
         kprintln!("[THREAD] {:?}'s resources are released", self);
 
         kfree(self.stack as *mut _, STACK_SIZE, STACK_ALIGN);
-        if let Some(pt) = &self.pagetable {
-            unsafe { pt.lock().destroy() };
-        }
     }
 }
 

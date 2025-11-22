@@ -189,39 +189,33 @@ impl PageTable {
         true
     }
 
-    pub unsafe fn set_invalid(&mut self, start: usize, va: usize) {
-        UserPool::dealloc_pages(va as *mut _, 1);
-        self.entries[Self::px(2, start)].set_invalid();
-    }
-
     pub unsafe fn unmapping(&mut self, entry: &mut MMapTableEntry) -> Vec<(usize, usize, usize)> {
         let mut start = entry.addr;
-        let end = start + entry.pages * PG_SIZE;
         let map_end = start + entry.length;
         let mut list = Vec::new();
-        while start < end {
-            kprintln!("Unmapping addr: {:#x}", start);
+        while start < map_end {
+            // kprintln!("Unmapping addr: {:#x}", start);
             if let Some(pte) = self.get_pte(start) {
                 if pte.is_valid() {
                     let va = pte.pa().into_va();
-                    if entry.writeback && start < map_end && pte.is_dirty() {
+                    if pte.is_dirty() {
                         let size = min(PG_SIZE, map_end - start);
 
-                        kprintln!(
-                            "size: {}, offset: {}, start: {}, va: {}, seek: {}",
-                            size,
-                            entry.offset,
-                            start,
-                            entry.addr,
-                            (entry.offset + start - entry.addr) as usize
-                        );
+                        // kprintln!(
+                        //     "size: {}, offset: {}, addr: {}, begin: {}, seek: {}",
+                        //     size,
+                        //     entry.offset,
+                        //     start,
+                        //     entry.addr,
+                        //     (entry.offset + start - entry.addr) as usize
+                        // );
                         list.push((start, va, size));
                     }
                 }
             }
             start += PG_SIZE;
         }
-        kprintln!("Unmapped mmap region: addr={:#x}", entry.addr);
+        // kprintln!("Unmapped mmap region: addr={:#x}", entry.addr);
         return list;
     }
 }

@@ -7,8 +7,8 @@ use crate::io::prelude::*;
 use crate::mem::pagetable::{PTEFlags, PageTable};
 use crate::mem::palloc::UserPool;
 use crate::mem::{div_round_up, PageAlign, PG_MASK, PG_SIZE};
-use crate::userproc::MMapTableEntry;
 use crate::userproc::ZERO_PAGE;
+use crate::userproc::{MMapTableEntry, PT_SEMA};
 use crate::{OsError, Result};
 
 #[derive(Debug, Clone, Copy)]
@@ -65,6 +65,7 @@ fn lazy_load_elf(
 
 /// gen segment entry in mmap table
 fn gen_segment_entry(file: &File, phdr: &ProgramHeaderEntry) -> MMapTableEntry {
+    #[cfg(feature = "debug")]
     kprintln!(
         "[USERPROC] MMap Segment: vaddr={:#x}, memsz={:#x}, filesz={:#x}, offset={:#x}",
         phdr.vaddr(),
@@ -98,6 +99,7 @@ pub fn init_user_stack(init_sp: usize) {
     assert!(init_sp % PG_SIZE == 0, "initial sp address misaligns");
 
     // Allocate a page from UserPool as user stack.
+    PT_SEMA.down();
     unsafe {
         UserPool::alloc_page(
             PageAlign::floor(init_sp - 1),
@@ -105,6 +107,7 @@ pub fn init_user_stack(init_sp: usize) {
             &ZERO_PAGE,
         );
     }
+    PT_SEMA.up();
 
     #[cfg(feature = "debug")]
     kprintln!(

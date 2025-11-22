@@ -146,7 +146,7 @@ impl File {
 impl Drop for File {
     fn drop(&mut self) {
         if self.deny_write {
-            kprintln!("File: allow write on drop");
+            // kprintln!("File: allow write on drop");
             self.vnode.allow_write();
         }
     }

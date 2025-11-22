@@ -26,6 +26,8 @@ use crate::userproc::load::init_user_stack;
 
 pub static ZERO_PAGE: [u8; PG_SIZE] = [0u8; PG_SIZE];
 
+pub static PT_SEMA: Semaphore = Semaphore::new(1);
+
 pub struct MMapTableEntry {
     pub addr: usize,
     pub length: usize,
@@ -71,7 +73,7 @@ impl UserProc {
 
 /// Map fd in memory addr.
 pub fn add_mmap_entry(addr: usize, fd: File) -> Option<usize> {
-    kprintln!("add mmap at: {:#x}", addr);
+    // kprintln!("add mmap at: {:#x}", addr);
     let length = fd.len().unwrap();
     if addr == 0
         || length == 0
@@ -141,6 +143,9 @@ pub fn remove_mmap_entry(id: usize) {
         .lock()
         .remove(&id)
         .unwrap();
+    if !entry.writeback {
+        return;
+    }
     unsafe {
         let list = current()
             .pagetable
@@ -149,21 +154,16 @@ pub fn remove_mmap_entry(id: usize) {
             .lock()
             .unmapping(&mut entry);
         for (addr, va, size) in list {
-            kprintln!("addr: {}, va: {}, size: {}", addr, va, size);
+            // kprintln!("addr: {}, va: {}, size: {}", addr, va, size);
             let buf = va as *mut [u8; PG_SIZE];
             entry
                 .fd
                 .seek(SeekFrom::Start((entry.offset + addr - entry.addr) as usize))
                 .unwrap();
-            kprintln!("Writing back mmap region: {}", (*buf)[0]);
+            // kprintln!("Writing back mmap region: {}", (*buf)[0]);
             entry.fd.write(&((*buf)[..size])).unwrap();
-            kprintln!("Wrote back mmap region");
-            current()
-                .pagetable
-                .as_ref()
-                .unwrap()
-                .lock()
-                .set_invalid(addr, va);
+            // kprintln!("Wrote back mmap region");
+            // kprintln!("set invalid out");
         }
     }
 }
@@ -240,13 +240,13 @@ pub fn execute(mut file: File, argv: Vec<String>) -> isize {
         .pagetable(pt)
         .userproc(userproc)
         .spawn();
-    kprintln!(
-        "{} {}, {} {}",
-        current().name(),
-        current().id(),
-        child.name(),
-        child.id()
-    );
+    // kprintln!(
+    //     "{} {}, {} {}",
+    //     current().name(),
+    //     current().id(),
+    //     child.name(),
+    //     child.id()
+    // );
     let tid = child.id();
     current().child.lock().push(child);
     tid
@@ -295,6 +295,9 @@ pub fn exit(_value: isize) -> ! {
         current().id(),
         _value
     );
+    // kprintln!("prod in");
+    PT_SEMA.down();
+
     for entry in current()
         .userproc
         .as_ref()
@@ -303,11 +306,18 @@ pub fn exit(_value: isize) -> ! {
         .lock()
         .values()
     {
+        // kprintln!("swapspace {:?} {} {}", current(), entry.page, entry.in_swap);
         if entry.in_swap {
             SwapBitmap::release(entry.page);
         }
     }
     remove_all_mmap_entries();
+    if let Some(pt) = &current().pagetable {
+        // kprintln!("{:?} remove pt", current());
+        unsafe { pt.lock().destroy() };
+    }
+    PT_SEMA.up();
+    // kprintln!("prod out");
     *current().userproc.as_ref().unwrap().exited.lock() = true;
     thread::exit();
 }
@@ -319,7 +329,7 @@ pub fn exit(_value: isize) -> ! {
 /// - `None`: if tid was not created by the current thread.
 pub fn wait(_tid: isize) -> Option<isize> {
     // TODO: Lab2.
-    kprintln!("start wait");
+    // kprintln!("start wait");
 
     let mut result = Some(-1);
     let mut index = None;
@@ -403,7 +413,7 @@ pub fn wait(_tid: isize) -> Option<isize> {
         current().child.lock().remove(ind);
     }
 
-    kprintln!("Wait finish.");
+    // kprintln!("Wait finish.");
     return result;
 }
 

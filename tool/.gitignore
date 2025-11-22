@@ -22,3 +22,5 @@ bookmarks/*
 !bookmarks/lab1.toml
 !bookmarks/lab2.toml
 !bookmarks/lab3.toml
+
+log

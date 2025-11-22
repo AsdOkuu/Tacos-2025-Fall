@@ -7,18 +7,20 @@ use crate::mem::userbuf::{
 use crate::mem::{PTEFlags, PageAlign, PageTable, MAX_USER_STACK, PG_SIZE};
 use crate::thread::{self};
 use crate::trap::Frame;
-use crate::userproc::ZERO_PAGE;
 use crate::userproc::{self};
+use crate::userproc::{PT_SEMA, ZERO_PAGE};
 use crate::{OsError, Result};
 use core::cmp::min;
 use io::Read;
 use io::Seek;
 
-use riscv::register::scause::Exception::{self, *};
+use riscv::register::scause::Exception::{self};
 use riscv::register::sstatus::{self, SPP};
 
 fn user_page_fault(frame: &mut Frame, addr: usize) -> Result<()> {
+    PT_SEMA.down();
     if thread::current().userproc.is_none() {
+        PT_SEMA.up();
         return Err(OsError::UserError);
     }
     let entry_addr = PageAlign::floor(addr);
@@ -65,15 +67,16 @@ fn user_page_fault(frame: &mut Frame, addr: usize) -> Result<()> {
         unsafe {
             UserPool::alloc_page(entry_addr, flags, &kbuf);
         }
+        PT_SEMA.up();
         return Ok(());
     }
     let init_sp = thread::current().userproc.as_ref().unwrap().init_sp;
-    let sp = if frame.x[2] > init_sp {
+    let sp = if frame.x[2] > init_sp || frame.x[2] + MAX_USER_STACK <= init_sp {
         frame.x[12]
     } else {
         frame.x[2]
     };
-    kprintln!("sp: {:#x}", sp);
+    // kprintln!("frame.x[2]: {:#x}, sp: {:#x}", sp, frame.x[2]);
     if addr < init_sp && addr + MAX_USER_STACK >= init_sp && addr >= sp {
         // Stack growth
         unsafe {
@@ -102,12 +105,12 @@ fn user_page_fault(frame: &mut Frame, addr: usize) -> Result<()> {
             .lock()
             .iter_mut()
         {
-            kprintln!(
-                "MMap region: addr={:#x}, length={:#x}, pages={:#x}",
-                mmap.addr,
-                mmap.length,
-                mmap.pages
-            );
+            // kprintln!(
+            //     "MMap region: addr={:#x}, length={:#x}, pages={:#x}",
+            //     mmap.addr,
+            //     mmap.length,
+            //     mmap.pages
+            // );
             if addr >= mmap.addr && addr < mmap.addr + mmap.pages * PG_SIZE {
                 // mmap region access
                 unsafe {
@@ -120,9 +123,9 @@ fn user_page_fault(frame: &mut Frame, addr: usize) -> Result<()> {
                                 mmap.offset + (entry_addr - mmap.addr) as usize,
                             ))
                             .unwrap();
-                        kprintln!("read in: {}", size);
+                        // kprintln!("read in: {}", size);
                         mmap.fd.read(&mut (*buf)[..size]).unwrap();
-                        kprintln!("read out");
+                        // kprintln!("read out");
                     }
                 }
 
@@ -135,15 +138,18 @@ fn user_page_fault(frame: &mut Frame, addr: usize) -> Result<()> {
                 UserPool::alloc_page(entry_addr, flags, &kbuf);
             }
 
+            PT_SEMA.up();
             return Ok(());
         } else {
+            PT_SEMA.up();
             return Err(OsError::BadPtr);
         }
     }
+    PT_SEMA.up();
     Ok(())
 }
 
-pub fn handler(frame: &mut Frame, fault: Exception, addr: usize) {
+pub fn handler(frame: &mut Frame, _fault: Exception, addr: usize) {
     let privilege = frame.sstatus.spp();
 
     let present = {
@@ -156,8 +162,9 @@ pub fn handler(frame: &mut Frame, fault: Exception, addr: usize) {
 
     unsafe { sstatus::set_sie() };
 
-    kprintln!("{} {}:", thread::current().name(), thread::current().id());
+    // kprintln!("{} {}:", thread::current().name(), thread::current().id());
 
+    #[cfg(feature = "Debug")]
     kprintln!(
         "Page fault at {:#x}: {} error {} page in {} context.",
         addr,

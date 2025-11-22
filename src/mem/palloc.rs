@@ -7,6 +7,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::fs::disk::Swap;
+use crate::io::{Seek, SeekFrom, Write};
 use crate::mem::{utils::*, PTEFlags};
 use crate::sbi::interrupt;
 use crate::sync::{Intr, Lazy, Mutex};
@@ -176,53 +177,58 @@ impl UserPool {
     /// Allocate 1 page
     pub unsafe fn alloc_page(va: usize, flags: PTEFlags, buf: &[u8; PG_SIZE]) {
         let old = interrupt::set(false);
+        let mut pat = PhysAddrTable::instance().0.lock();
         if Self::instance().lock().allocated == USER_POOL_LIMIT {
-            let mut pat = PhysAddrTable::instance().0.lock();
-            let entry = pat[*PAGE_POINTER.lock() as usize].as_mut().unwrap();
-            kprintln!("name: {}", entry.thread.name());
-            let old_va = entry.va;
-            let old_pa = entry
-                .thread
-                .pagetable
-                .as_ref()
-                .unwrap()
-                .lock()
-                .get_pte(entry.va)
-                .unwrap()
-                .pa()
-                .value();
+            // kprintln!("in!!");
+            // for i in 0..256 {
+            //     if let Some(pae) = pat[i].as_ref() {
+            //         if pae
+            //             .thread
+            //             .pagetable
+            //             .as_ref()
+            //             .unwrap()
+            //             .lock()
+            //             .get_pte(pae.va)
+            //             .is_none()
+            //         {
+            //             panic!(
+            //                 "error pt/pat sync: {:?}'s {:#x} on {}",
+            //                 pae.thread, pae.va, i
+            //             );
+            //         }
+            //     } else {
+            //         panic!("error phys addr table");
+            //     }
+            // }
 
-            kprintln!("get old va/pa.");
+            let entry = pat[*PAGE_POINTER.lock() as usize].as_mut().unwrap();
+            let entry_pt = entry.thread.pagetable.as_ref().unwrap().lock();
+            // kprintln!("name: {}", entry.thread.name());
+            let old_va = entry.va;
+            let old_pa = entry_pt.get_pte(entry.va).unwrap().pa().value();
+
+            // kprintln!("get old va/pa.");
 
             // swap condition: 1. not in mmap(writeback) 2. dirty or had been in swap space
             let mut wb = false;
-            for mmap in entry
+            let mut mmap_index = 0;
+            for (index, mmap) in entry
                 .thread
                 .userproc
                 .as_ref()
                 .unwrap()
                 .mmap_table
                 .lock()
-                .values()
+                .iter()
             {
-                kprintln!("alloc check wb: {} {}", mmap.addr, mmap.length);
                 if mmap.writeback && old_va >= mmap.addr && old_va < mmap.addr + mmap.length {
                     wb = true;
+                    mmap_index = *index;
                     break;
                 }
             }
 
-            kprintln!("checked wb.");
-
-            let dirty = entry
-                .thread
-                .pagetable
-                .as_ref()
-                .unwrap()
-                .lock()
-                .get_pte(old_va)
-                .unwrap()
-                .is_dirty();
+            let dirty = entry_pt.get_pte(old_va).unwrap().is_dirty();
 
             let had_been = entry
                 .thread
@@ -233,55 +239,26 @@ impl UserPool {
                 .lock()
                 .contains_key(&old_va);
 
+            // kprintln!(
+            //     "checked wb:{}, dirty: {}, had_been: {}",
+            //     wb,
+            //     dirty,
+            //     had_been
+            // );
+
             if !wb && (dirty || had_been) {
                 // Add swap entry or change swap entry
                 let mut flags = PTEFlags::V;
-                if entry
-                    .thread
-                    .pagetable
-                    .as_ref()
-                    .unwrap()
-                    .lock()
-                    .get_pte(old_va)
-                    .unwrap()
-                    .is_readable()
-                {
+                if entry_pt.get_pte(old_va).unwrap().is_readable() {
                     flags |= PTEFlags::R;
                 }
-                if entry
-                    .thread
-                    .pagetable
-                    .as_ref()
-                    .unwrap()
-                    .lock()
-                    .get_pte(old_va)
-                    .unwrap()
-                    .is_writable()
-                {
+                if entry_pt.get_pte(old_va).unwrap().is_writable() {
                     flags |= PTEFlags::W;
                 }
-                if entry
-                    .thread
-                    .pagetable
-                    .as_ref()
-                    .unwrap()
-                    .lock()
-                    .get_pte(old_va)
-                    .unwrap()
-                    .is_executable()
-                {
+                if entry_pt.get_pte(old_va).unwrap().is_executable() {
                     flags |= PTEFlags::X;
                 }
-                if entry
-                    .thread
-                    .pagetable
-                    .as_ref()
-                    .unwrap()
-                    .lock()
-                    .get_pte(old_va)
-                    .unwrap()
-                    .is_user()
-                {
+                if entry_pt.get_pte(old_va).unwrap().is_user() {
                     flags |= PTEFlags::U;
                 }
                 let mut st = entry.thread.userproc.as_ref().unwrap().swap_table.lock();
@@ -291,10 +268,39 @@ impl UserPool {
                     in_swap: false,
                 });
 
+                drop(entry_pt);
+
+                // kprintln!("{:?} {:#x} pageswap", entry.thread, old_va);
+
                 let page =
                     Swap::write(&*(PhysAddr::from_pa(old_pa).into_va() as *const [u8; PG_SIZE]));
                 swap_entry.page = page;
                 swap_entry.in_swap = true;
+            } else if wb && dirty {
+                let mut mt = entry.thread.userproc.as_ref().unwrap().mmap_table.lock();
+                let mmap = mt.get_mut(&mmap_index).unwrap();
+                let mut start = mmap.addr;
+                let end = mmap.addr + mmap.length;
+                while start < end {
+                    if let Some(pte) = entry_pt.get_pte(start) {
+                        if pte.pa().value() == old_pa {
+                            break;
+                        }
+                    }
+                    start += PG_SIZE;
+                }
+                assert!(start < end, "mmap table and page table don't match.");
+
+                drop(entry_pt);
+
+                let size = min(PG_SIZE, end - start);
+                let pos = mmap.offset + start - mmap.addr;
+                mmap.fd.seek(SeekFrom::Start(pos)).unwrap();
+                mmap.fd
+                    .write(&(*(old_va as *mut [u8; PG_SIZE]))[..size])
+                    .unwrap();
+            } else {
+                drop(entry_pt);
             }
 
             entry
@@ -322,10 +328,10 @@ impl UserPool {
 
             // Edit PhysAddrTable
 
-            pat[*PAGE_POINTER.lock() as usize] = Some(PhysAddrEntry {
+            *entry = PhysAddrEntry {
                 va,
                 thread: current(),
-            });
+            };
             *PAGE_POINTER.lock() += 1;
         } else {
             let kva = Self::instance().lock().alloc(1);
@@ -343,28 +349,44 @@ impl UserPool {
                 .map(pa, va, PG_SIZE, flags);
 
             // Edit PhysAddrTable
-            kprintln!("{}", pa.value());
-            PhysAddrTable::instance().0.lock()[pa.value() / PG_SIZE - PHYS_START] =
-                Some(PhysAddrEntry {
-                    va,
-                    thread: current(),
-                });
+            // kprintln!("{}", pa.value());
+            pat[pa.value() / PG_SIZE - PHYS_START] = Some(PhysAddrEntry {
+                va,
+                thread: current(),
+            });
         }
+        drop(pat);
         interrupt::set(old);
     }
 
     /// Free n pages of memory starting at `ptr`
     pub unsafe fn dealloc_pages(ptr: *mut u8, n: usize) {
+        // kprintln!(
+        //     "{:?} Delete {}",
+        //     current(),
+        //     PhysAddr::from(ptr).value() / PG_SIZE - PHYS_START
+        // );
+        assert!(n == 1, "n != 1 in dealloc user page");
         Self::instance().lock().dealloc(ptr, n);
+        // kprintln!("buddy finish");
         for i in 0..n {
             let pa = PhysAddr::from(ptr.add(i * PG_SIZE));
-            PhysAddrTable::instance().0.lock()[pa.value() / PG_SIZE - PHYS_START] = None;
+            // kprintln!(
+            //     "{} {}: pa: {:#x}, ind: {}",
+            //     current().name(),
+            //     current().id(),
+            //     pa.value(),
+            //     pa.value() / PG_SIZE - PHYS_START
+            // );
+            let mut pat = PhysAddrTable::instance().0.lock();
+
+            pat[pa.value() / PG_SIZE - PHYS_START] = None;
         }
     }
 
     /// Initialize the page-based allocator
     pub unsafe fn init(start: usize, end: usize) {
-        kprintln!("start: {}, end: {}", start, end);
+        // kprintln!("start: {}, end: {}", start, end);
         Self::instance().lock().insert_range(start, end);
     }
 

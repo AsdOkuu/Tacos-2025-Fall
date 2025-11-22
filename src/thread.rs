@@ -32,6 +32,7 @@ pub fn destroy() {
 
 /// Yield the control to another thread (if there's another one ready to run).
 pub fn schedule() {
+    // kprintln!("sched!");
     Manager::get().schedule()
 }
 

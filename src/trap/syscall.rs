@@ -17,7 +17,7 @@ use crate::mem::userbuf::read_user_byte;
 use crate::mem::userbuf::write_user_byte;
 use crate::sbi::console_getchar;
 use crate::sync::Mutex;
-use crate::userproc::{add_mmap_entry, remove_mmap_entry};
+use crate::userproc::{add_mmap_entry, remove_mmap_entry, PT_SEMA};
 use crate::Result;
 use crate::{
     fs::{disk::DISKFS, FileSys},
@@ -90,7 +90,7 @@ pub fn syscall_handler(_id: usize, _args: [usize; 3], sp: usize) -> isize {
         SYS_HALT => shutdown(),
         SYS_EXIT => exit(_args[0] as isize),
         SYS_EXEC => {
-            kprintln!("exec!!!");
+            // kprintln!("exec!!!");
             // pagetable required.
             if current().pagetable.is_none() {
                 return -1;
@@ -139,7 +139,7 @@ pub fn syscall_handler(_id: usize, _args: [usize; 3], sp: usize) -> isize {
                 };
             }
 
-            kprintln!("check pass");
+            // kprintln!("check pass");
 
             execute(file, arglist)
         }
@@ -196,16 +196,16 @@ pub fn syscall_handler(_id: usize, _args: [usize; 3], sp: usize) -> isize {
             let fd = _args[0];
             let buf = _args[1] as *mut u8;
             let size = _args[2];
-            kprintln!(
-                "sys_read called, fd: {}, ptr: {:#x}, size: {}",
-                fd,
-                _args[1],
-                size
-            );
+            // kprintln!(
+            //     "sys_read called, fd: {}, ptr: {:#x}, size: {}",
+            //     fd,
+            //     _args[1],
+            //     size
+            // );
             if get_u8array_checked(_args[1], size, sp).is_err() {
                 return -1;
             }
-            kprintln!("Succeed to read");
+            // kprintln!("Succeed to read");
             match fd {
                 0 => {
                     // stdin
@@ -258,22 +258,22 @@ pub fn syscall_handler(_id: usize, _args: [usize; 3], sp: usize) -> isize {
             }
             let fd = _args[0];
             let size = _args[2];
-            if fd > 2 {
-                kprintln!(
-                    "sys_write called, fd: {}, ptr: {:#x}, size: {}",
-                    fd,
-                    _args[1],
-                    size
-                );
-            }
+            // if fd > 2 {
+            //     kprintln!(
+            //         "sys_write called, fd: {}, ptr: {:#x}, size: {}",
+            //         fd,
+            //         _args[1],
+            //         size
+            //     );
+            // }
 
             let s = match get_u8array_checked(_args[1], size, sp) {
                 Ok(n) => n,
                 Err(_) => return -1,
             };
-            if fd > 2 {
-                kprintln!("ok");
-            }
+            // if fd > 2 {
+            //     kprintln!("ok");
+            // }
             match fd {
                 0 => {
                     // stdin
@@ -297,7 +297,7 @@ pub fn syscall_handler(_id: usize, _args: [usize; 3], sp: usize) -> isize {
                     match file.write(&s) {
                         Ok(n) => n as isize,
                         Err(_) => {
-                            kprintln!("write err");
+                            // kprintln!("write err");
                             -1
                         }
                     }
@@ -490,8 +490,10 @@ pub fn syscall_handler(_id: usize, _args: [usize; 3], sp: usize) -> isize {
             if current().userproc.is_none() {
                 return -1;
             }
-            kprintln!("sys unmap");
+            // kprintln!("sys unmap");
+            PT_SEMA.down();
             remove_mmap_entry(id);
+            PT_SEMA.up();
             0
         }
         _ => -1,
