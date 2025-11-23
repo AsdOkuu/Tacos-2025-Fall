@@ -1,6 +1,7 @@
 //! Global Page Allocator
 
 use core::cmp::min;
+use core::ops::DerefMut;
 
 use alloc::sync::Arc;
 use alloc::vec;
@@ -173,6 +174,35 @@ const PHYS_START: usize = 532736;
 
 static PAGE_POINTER: Lazy<Mutex<u8>> = Lazy::new(|| Mutex::new(0));
 
+fn next_page(pat: &mut Vec<Option<PhysAddrEntry>>) -> usize {
+    *PAGE_POINTER.lock() += 1;
+    loop {
+        let entry = pat[*PAGE_POINTER.lock() as usize].as_mut().unwrap();
+        if !entry
+            .thread
+            .pagetable
+            .as_ref()
+            .unwrap()
+            .lock()
+            .get_pte(entry.va)
+            .unwrap()
+            .is_accessed()
+        {
+            return *PAGE_POINTER.lock() as usize;
+        }
+        entry
+            .thread
+            .pagetable
+            .as_ref()
+            .unwrap()
+            .lock()
+            .get_mut_pte(entry.va)
+            .unwrap()
+            .set_unaccessed();
+        *PAGE_POINTER.lock() += 1;
+    }
+}
+
 impl UserPool {
     /// Allocate 1 page
     pub unsafe fn alloc_page(va: usize, flags: PTEFlags, buf: &[u8; PG_SIZE]) {
@@ -201,7 +231,8 @@ impl UserPool {
             //     }
             // }
 
-            let entry = pat[*PAGE_POINTER.lock() as usize].as_mut().unwrap();
+            let idx = next_page(pat.deref_mut());
+            let entry = pat[idx].as_mut().unwrap();
             let entry_pt = entry.thread.pagetable.as_ref().unwrap().lock();
             // kprintln!("name: {}", entry.thread.name());
             let old_va = entry.va;
@@ -332,7 +363,6 @@ impl UserPool {
                 va,
                 thread: current(),
             };
-            *PAGE_POINTER.lock() += 1;
         } else {
             let kva = Self::instance().lock().alloc(1);
             let pa = PhysAddr::from(kva);
