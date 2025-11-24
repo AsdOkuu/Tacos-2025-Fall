@@ -328,7 +328,7 @@ impl UserPool {
                 let pos = mmap.offset + start - mmap.addr;
                 mmap.fd.seek(SeekFrom::Start(pos)).unwrap();
                 mmap.fd
-                    .write(&(*(old_va as *mut [u8; PG_SIZE]))[..size])
+                    .write(&(*(PhysAddr::from_pa(old_pa).into_va() as *mut [u8; PG_SIZE]))[..size])
                     .unwrap();
             } else {
                 drop(entry_pt);
