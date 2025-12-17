@@ -48,7 +48,8 @@ extern "C" {
 
 pub type Result<T> = core::result::Result<T, OsError>;
 
-static DEFAULT_TP: Lazy<Mutex<Tracepoint>> = Lazy::new(|| Mutex::new(Tracepoint::new()));
+static DEFAULT_TP: Lazy<Mutex<Tracepoint<DefaultTracer>>> =
+    Lazy::new(|| Mutex::new(Tracepoint::new()));
 
 /// Initializes major components of our kernel
 ///

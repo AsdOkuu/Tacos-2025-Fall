@@ -1,5 +1,5 @@
 mod tracepoint;
-mod tracing;
+mod tracer;
 
 pub use self::tracepoint::Tracepoint;
-pub use self::tracing::*;
+pub use self::tracer::*;

@@ -1,14 +1,20 @@
+use core::marker::PhantomData;
+
 pub trait Traceable {
     fn trace_handler(&self);
 }
 
-pub struct Tracepoint {
+pub struct Tracepoint<T: Traceable> {
     enable: bool,
+    _marker: PhantomData<T>,
 }
 
-impl Tracepoint {
+impl<T: Traceable> Tracepoint<T> {
     pub fn new() -> Self {
-        Self { enable: false }
+        Self {
+            enable: false,
+            _marker: PhantomData,
+        }
     }
 
     pub fn enable(&mut self) {
@@ -19,7 +25,7 @@ impl Tracepoint {
         self.enable = false;
     }
 
-    pub fn trace(&self, traceable: &dyn Traceable) {
+    pub fn trace(&self, traceable: &T) {
         if self.enable {
             traceable.trace_handler();
         }
