@@ -17,6 +17,7 @@ pub mod io;
 pub mod mem;
 pub mod sync;
 pub mod thread;
+pub mod trace;
 pub mod trap;
 pub mod userproc;
 
@@ -33,6 +34,11 @@ use riscv::register;
 use fs::{disk::DISKFS, FileSys};
 use mem::PhysAddr;
 
+use sync::Lazy;
+use sync::Mutex;
+use trace::DefaultTracer;
+use trace::Tracepoint;
+
 extern "C" {
     fn sbss();
     fn ebss();
@@ -41,6 +47,8 @@ extern "C" {
 }
 
 pub type Result<T> = core::result::Result<T, OsError>;
+
+static DEFAULT_TP: Lazy<Mutex<Tracepoint>> = Lazy::new(|| Mutex::new(Tracepoint::new()));
 
 /// Initializes major components of our kernel
 ///
@@ -151,6 +159,9 @@ pub extern "C" fn main(hart_id: usize, dtb: usize) -> ! {
     }
 
     DISKFS.unmount();
+
+    DEFAULT_TP.lock().enable();
+    DEFAULT_TP.lock().trace(&DefaultTracer);
 
     kprintln!("Goodbye, World!");
 
