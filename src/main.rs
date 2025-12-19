@@ -37,6 +37,7 @@ use mem::PhysAddr;
 use sync::Lazy;
 use sync::Mutex;
 use trace::DefaultTracer;
+use trace::TraceLevel;
 use trace::Tracepoint;
 
 extern "C" {
@@ -49,7 +50,7 @@ extern "C" {
 pub type Result<T> = core::result::Result<T, OsError>;
 
 static DEFAULT_TP: Lazy<Mutex<Tracepoint<DefaultTracer>>> =
-    Lazy::new(|| Mutex::new(Tracepoint::new()));
+    Lazy::new(|| Mutex::new(Tracepoint::new(TraceLevel::Debug)));
 
 /// Initializes major components of our kernel
 ///
@@ -128,6 +129,7 @@ pub extern "C" fn main(hart_id: usize, dtb: usize) -> ! {
         // TODO: Lab 0
         const BSIZE: usize = 4096;
         'shell: loop {
+            DEFAULT_TP.lock().trace(&DefaultTracer);
             kprint!("PKUOS>");
             let mut input = [0; BSIZE];
             let mut len = 0;
@@ -153,6 +155,14 @@ pub extern "C" fn main(hart_id: usize, dtb: usize) -> ! {
             let input = str::from_utf8(&input[0..len]).unwrap();
             match input {
                 "whoami" => kprintln!("2300012914"),
+                "enable_trace" => {
+                    DEFAULT_TP.lock().enable();
+                    kprintln!("trace enabled");
+                }
+                "disable_trace" => {
+                    DEFAULT_TP.lock().disable();
+                    kprintln!("trace disabled");
+                }
                 "exit" => break,
                 _ => kprintln!("invalid command"),
             }
@@ -160,9 +170,6 @@ pub extern "C" fn main(hart_id: usize, dtb: usize) -> ! {
     }
 
     DISKFS.unmount();
-
-    DEFAULT_TP.lock().enable();
-    DEFAULT_TP.lock().trace(&DefaultTracer);
 
     kprintln!("Goodbye, World!");
 

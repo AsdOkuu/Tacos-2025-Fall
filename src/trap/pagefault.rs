@@ -97,6 +97,21 @@ fn user_page_fault(frame: &mut Frame, addr: usize) -> Result<()> {
         let entry_addr = PageAlign::floor(addr);
         let mut data = None;
         let mut kbuf = [0u8; PG_SIZE];
+        // for (_, mmap) in thread::current()
+        //     .userproc
+        //     .as_ref()
+        //     .unwrap()
+        //     .mmap_table
+        //     .lock()
+        //     .iter_mut()
+        // {
+        //     kprintln!(
+        //         "MMap region: addr={:#x}, length={:#x}, pages={:#x}",
+        //         mmap.addr,
+        //         mmap.length,
+        //         mmap.pages
+        //     );
+        // }
         for (_, mmap) in thread::current()
             .userproc
             .as_ref()
