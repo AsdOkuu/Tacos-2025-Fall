@@ -268,7 +268,7 @@ pub fn break_handler(frame: &mut Frame) {
     }
 }
 
-pub fn probe_symbol(name: &str, offset: usize) -> Vec<Arc<Probe>> {
+pub fn probe_symbol(name: &str, offset: isize) -> Vec<Arc<Probe>> {
     let mut probes = Vec::new();
     let addresses = name_to_address(name);
     for addr in addresses {
