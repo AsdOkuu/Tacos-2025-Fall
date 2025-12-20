@@ -8,8 +8,8 @@ use crate::{
 };
 
 struct ProbeData {
-    pre_handler: Option<fn()>,
-    post_handler: Option<fn()>,
+    pre_handler: Option<fn(&mut Frame)>,
+    post_handler: Option<fn(&mut Frame)>,
     addr: usize,
     break_addr: usize,
     insts: [u8; 6],
@@ -28,11 +28,11 @@ impl ProbeData {
         }
     }
 
-    fn set_pre_handler(&mut self, handler: fn()) {
+    fn set_pre_handler(&mut self, handler: fn(&mut Frame)) {
         self.pre_handler = Some(handler);
     }
 
-    fn set_post_handler(&mut self, handler: fn()) {
+    fn set_post_handler(&mut self, handler: fn(&mut Frame)) {
         self.post_handler = Some(handler);
     }
 
@@ -140,7 +140,7 @@ impl Probe {
         }
     }
 
-    pub fn set_pre_handler(&self, handler: fn()) {
+    pub fn set_pre_handler(&self, handler: fn(&mut Frame)) {
         self.sema.down();
         {
             let mut data = self.inner.lock();
@@ -149,7 +149,7 @@ impl Probe {
         self.sema.up();
     }
 
-    pub fn set_post_handler(&self, handler: fn()) {
+    pub fn set_post_handler(&self, handler: fn(&mut Frame)) {
         self.sema.down();
         {
             let mut data = self.inner.lock();
@@ -215,7 +215,7 @@ pub fn break_handler(frame: &mut Frame) {
         probe.sema.down();
         // call pre handler
         if let Some(handler) = probe.inner.lock().pre_handler {
-            handler();
+            handler(frame);
         }
         // set sepc to insts
         frame.sepc = probe.inner.lock().insts.as_ptr() as usize;
@@ -255,7 +255,7 @@ pub fn break_handler(frame: &mut Frame) {
             .set_executable(false);
         // call post handler
         if let Some(handler) = probe.inner.lock().post_handler {
-            handler();
+            handler(frame);
         }
         // set sepc to addr
         frame.sepc = probe.inner.lock().addr;

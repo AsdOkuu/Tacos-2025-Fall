@@ -140,10 +140,10 @@ pub extern "C" fn main(hart_id: usize, dtb: usize) -> ! {
 
         let probe_addr = test_probe_flag as usize;
         let probe = Arc::new(Probe::new(probe_addr));
-        probe.set_pre_handler(|| {
+        probe.set_pre_handler(|frame| {
             kprintln!("[PROBE] Pre handler called.");
         });
-        probe.set_post_handler(|| {
+        probe.set_post_handler(|frame| {
             kprintln!("[PROBE] Post handler called.");
         });
         register_probe(probe.clone());
