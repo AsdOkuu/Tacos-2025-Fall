@@ -52,6 +52,21 @@ pub type Result<T> = core::result::Result<T, OsError>;
 static DEFAULT_TP: Lazy<Mutex<Tracepoint<DefaultTracer>>> =
     Lazy::new(|| Mutex::new(Tracepoint::new(TraceLevel::Debug)));
 
+#[cfg(feature = "test-probe")]
+#[allow(named_asm_labels)]
+fn test_probe() {
+    use core::arch::asm;
+    unsafe {
+        asm!("test_probe_flag:", "nop");
+    }
+    kprintln!("[TEST PROBE] Inside test_probe function.");
+}
+
+#[cfg(feature = "test-probe")]
+extern "C" {
+    fn test_probe_flag();
+}
+
 /// Initializes major components of our kernel
 ///
 /// Note: `extern "C"` ensures this function adhere to the C calling convention.
@@ -115,6 +130,32 @@ pub extern "C" fn main(hart_id: usize, dtb: usize) -> ! {
     // Init timer & external interrupt
     sbi::interrupt::init();
 
+    #[cfg(feature = "test-probe")]
+    {
+        use alloc::sync::Arc;
+        use trace::register_probe;
+        use trace::Probe;
+
+        use crate::trace::unregister_probe;
+
+        let probe_addr = test_probe_flag as usize;
+        let probe = Arc::new(Probe::new(probe_addr));
+        probe.set_pre_handler(|| {
+            kprintln!("[PROBE] Pre handler called.");
+        });
+        probe.set_post_handler(|| {
+            kprintln!("[PROBE] Post handler called.");
+        });
+        register_probe(probe.clone());
+
+        test_probe();
+
+        kprintln!("[TEST PROBE] test_probe function returned.");
+
+        unregister_probe(probe);
+
+        test_probe();
+    }
     #[cfg(feature = "test")]
     {
         use alloc::sync::Arc;

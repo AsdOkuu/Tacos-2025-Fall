@@ -6,6 +6,7 @@ pub mod intr;
 pub mod lazy;
 pub mod mutex;
 pub mod once;
+pub mod rwlock;
 pub mod sema;
 pub mod sleep;
 pub mod spin;

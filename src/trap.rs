@@ -7,6 +7,7 @@ mod syscall;
 use crate::device::{plic, virtio};
 use crate::sbi::{self, interrupt};
 use crate::thread;
+use crate::trace::break_handler;
 use crate::userproc::exit;
 use core::arch;
 
@@ -108,6 +109,11 @@ pub extern "C" fn trap_handler(frame: &mut Frame) {
             let old = interrupt::set(false);
             pagefault::handler(frame, f, stval);
             interrupt::set(old);
+        }
+
+        Exception(Breakpoint) => {
+            // kprintln!("[TRAP] Breakpoint Exception at sepc={:#x}", frame.sepc);
+            break_handler(frame);
         }
 
         _ => {

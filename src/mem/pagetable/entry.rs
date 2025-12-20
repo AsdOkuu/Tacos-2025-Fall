@@ -108,6 +108,22 @@ impl Entry {
         self.0 &= !PTEFlags::A.bits;
     }
 
+    pub fn set_writable(&mut self, writable: bool) {
+        if writable {
+            self.0 |= PTEFlags::W.bits;
+        } else {
+            self.0 &= !PTEFlags::W.bits;
+        }
+    }
+
+    pub fn set_executable(&mut self, executable: bool) {
+        if executable {
+            self.0 |= PTEFlags::X.bits;
+        } else {
+            self.0 &= !PTEFlags::X.bits;
+        }
+    }
+
     /// A PTE is a leaf PTE when at least one bit in R, W and X
     /// is set; otherwise, it is a pointer to the next level of
     /// the page table.

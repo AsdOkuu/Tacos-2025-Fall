@@ -34,7 +34,8 @@ use crate::mem::{
     utils::{PageAlign, PhysAddr, PG_SIZE},
 };
 use crate::mem::{KERN_BASE, PG_SHIFT, VM_OFFSET};
-use crate::sync::OnceCell;
+use crate::sync::rwlock::RwLock;
+use crate::sync::{Mutex, OnceCell};
 use crate::userproc::MMapTableEntry;
 
 pub use self::entry::*;
@@ -220,10 +221,10 @@ impl PageTable {
     }
 }
 
-pub struct KernelPgTable(OnceCell<PageTable>);
+pub struct KernelPgTable(OnceCell<RwLock<PageTable>>);
 
 impl KernelPgTable {
-    pub fn get() -> &'static PageTable {
+    pub fn get() -> &'static RwLock<PageTable> {
         Self::instance().get()
     }
 
@@ -231,7 +232,7 @@ impl KernelPgTable {
     /// This method ensures all kernel memory mappings exist in user memory space.
     pub fn clone() -> PageTable {
         let other = PageTable::new();
-        other.entries.copy_from_slice(Self::get().entries);
+        other.entries.copy_from_slice(Self::get().read().entries);
         other
     }
 
@@ -245,7 +246,7 @@ impl KernelPgTable {
     /// At the entrance of kernel, a crude page table was set up to support basic
     /// paging capability. To strengthen memory protection, it's necessary to set up
     /// a fine-grained page table.
-    pub fn init_inner(ram_size: usize) -> PageTable {
+    pub fn init_inner(ram_size: usize) -> RwLock<PageTable> {
         let mut root = PageTable::new();
 
         // Kernel's code and data exist in all memory spaces, therefore the global bit is set.
@@ -273,10 +274,10 @@ impl KernelPgTable {
         root.map(PhysAddr::from(MMIO_BASE), MMIO_BASE, PG_SIZE, rw);
 
         root.activate();
-        root
+        RwLock::new(root)
     }
 
-    fn instance() -> &'static OnceCell<PageTable> {
+    fn instance() -> &'static OnceCell<RwLock<PageTable>> {
         static PAGETABLE: KernelPgTable = KernelPgTable(OnceCell::new());
 
         &PAGETABLE.0

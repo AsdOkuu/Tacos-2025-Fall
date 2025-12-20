@@ -213,7 +213,7 @@ impl Manager {
         if let Some(pt) = self.current.lock().pagetable.as_ref() {
             pt.lock().activate();
         } else {
-            KernelPgTable::get().activate();
+            KernelPgTable::get().read().activate();
         }
     }
 }

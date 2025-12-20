@@ -27,7 +27,7 @@ use self::palloc::USER_POOL_LIMIT;
 pub fn get_pte(va: usize) -> Option<Entry> {
     match crate::thread::Manager::get().current.lock().pagetable {
         Some(ref pt) => pt.lock().get_pte(va).copied(),
-        None => KernelPgTable::get().get_pte(va).copied(),
+        None => KernelPgTable::get().read().get_pte(va).copied(),
     }
 }
 

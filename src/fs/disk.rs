@@ -137,7 +137,8 @@ impl FileSys for DiskFs {
     }
 
     fn unmount(&self) {
-        let _ = self.free_map.lock().flush();
+        let free_map = self.free_map.lock();
+        let _ = free_map.flush();
     }
 
     fn create(&self, id: Self::Path) -> Result<super::File> {

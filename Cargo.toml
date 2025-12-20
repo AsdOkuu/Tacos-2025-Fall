@@ -23,6 +23,8 @@ shell = []
 
 thread-scheduler-priority = []
 
+test-probe = []
+
 # ----------------------------------- TEST ----------------------------------- #
 
 test = []
