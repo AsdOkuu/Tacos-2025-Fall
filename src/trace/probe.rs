@@ -1,9 +1,10 @@
-use alloc::{collections::btree_map::BTreeMap, sync::Arc};
+use alloc::{collections::btree_map::BTreeMap, sync::Arc, vec::Vec};
 
 use crate::{
     mem::KernelPgTable,
     sync::{Lazy, Mutex, Semaphore},
     thread::current,
+    trace::symbol::name_to_address,
     trap::Frame,
 };
 
@@ -265,4 +266,14 @@ pub fn break_handler(frame: &mut Frame) {
     } else {
         panic!("No probe found at address {:#x}", addr);
     }
+}
+
+pub fn probe_symbol(name: &str, offset: usize) -> Vec<Arc<Probe>> {
+    let mut probes = Vec::new();
+    let addresses = name_to_address(name);
+    for addr in addresses {
+        let probe = Arc::new(Probe::new(addr + offset));
+        probes.push(probe);
+    }
+    probes
 }

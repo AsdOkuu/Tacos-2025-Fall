@@ -4,6 +4,7 @@ mod tracepoint;
 mod tracer;
 
 pub use self::probe::break_handler;
+pub use self::probe::probe_symbol;
 pub use self::probe::register_probe;
 pub use self::probe::unregister_probe;
 pub use self::probe::Probe;

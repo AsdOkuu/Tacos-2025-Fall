@@ -136,10 +136,13 @@ pub extern "C" fn main(hart_id: usize, dtb: usize) -> ! {
         use trace::register_probe;
         use trace::Probe;
 
+        use crate::trace::probe_symbol;
         use crate::trace::unregister_probe;
 
-        let probe_addr = test_probe_flag as usize;
-        let probe = Arc::new(Probe::new(probe_addr));
+        // let probe_addr = test_probe_flag as usize;
+        // let probe = Arc::new(Probe::new(probe_addr));
+        let probes = probe_symbol("test_probe_flag", 0);
+        let probe = probes.get(0).unwrap();
         probe.set_pre_handler(|frame| {
             kprintln!("[PROBE] Pre handler called.");
         });
@@ -152,7 +155,7 @@ pub extern "C" fn main(hart_id: usize, dtb: usize) -> ! {
 
         kprintln!("[TEST PROBE] test_probe function returned.");
 
-        unregister_probe(probe);
+        unregister_probe(probe.clone());
 
         test_probe();
     }
@@ -177,6 +180,9 @@ pub extern "C" fn main(hart_id: usize, dtb: usize) -> ! {
             let addr_ptr = trace::symbol::get_kallsyms_address();
             *addr_ptr as usize
         });
+        kprintln!("[TEST KALLSYMS] Lookup 'core::option::Option<T>::map':");
+        let addresses = trace::symbol::name_to_address("core::option::Option<T>::map");
+        kprintln!("[TEST KALLSYMS] Addresses found: {:?}", addresses);
     }
     #[cfg(feature = "test")]
     {
