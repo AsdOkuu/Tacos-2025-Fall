@@ -233,7 +233,7 @@ pub fn handler(frame: &mut Frame, _fault: Exception, addr: usize) {
                 frame.x[11] = 1; // set a1 to non-zero
                 frame.sepc = __knrl_write_usr_exit as _;
             } else {
-                panic!("Kernel page fault");
+                panic!("Kernel page fault. sepc: {:#x}", frame.sepc);
             }
         }
         SPP::User => {

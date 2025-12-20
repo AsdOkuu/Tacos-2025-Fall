@@ -25,6 +25,8 @@ thread-scheduler-priority = []
 
 test-probe = []
 
+test-kallsyms = []
+
 # ----------------------------------- TEST ----------------------------------- #
 
 test = []

@@ -1,4 +1,5 @@
 mod probe;
+pub mod symbol;
 mod tracepoint;
 mod tracer;
 

@@ -57,7 +57,7 @@ static DEFAULT_TP: Lazy<Mutex<Tracepoint<DefaultTracer>>> =
 fn test_probe() {
     use core::arch::asm;
     unsafe {
-        asm!("test_probe_flag:", "nop");
+        asm!("test_probe_flag:", "c.addi t0, 5");
     }
     kprintln!("[TEST PROBE] Inside test_probe function.");
 }
@@ -155,6 +155,28 @@ pub extern "C" fn main(hart_id: usize, dtb: usize) -> ! {
         unregister_probe(probe);
 
         test_probe();
+    }
+    #[cfg(feature = "test-kallsyms")]
+    {
+        kprintln!("[TEST KALLSYMS]");
+        kprintln!("[TEST KALLSYMS] Number of symbols: {}", unsafe {
+            *trace::symbol::get_kallsyms_num()
+        });
+        kprintln!("[TEST KALLSYMS] The first name: {}", unsafe {
+            let name_ptr = trace::symbol::get_kallsyms_names();
+            let index_ptr = trace::symbol::get_kallsyms_names_index();
+            let sname_ptr = name_ptr.add(*index_ptr as usize);
+            let mut len = 0;
+            while *sname_ptr.add(len) != 0 {
+                len += 1;
+            }
+            let name_slice = slice::from_raw_parts(sname_ptr, len);
+            str::from_utf8(name_slice).unwrap()
+        });
+        kprintln!("[TEST KALLSYMS] The first address: {:#x}", unsafe {
+            let addr_ptr = trace::symbol::get_kallsyms_address();
+            *addr_ptr as usize
+        });
     }
     #[cfg(feature = "test")]
     {
