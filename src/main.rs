@@ -6,6 +6,7 @@ extern crate bitflags;
 extern crate elf_rs;
 extern crate fdt;
 extern crate riscv;
+extern crate riscv_decode;
 
 #[macro_use]
 pub mod sbi;
@@ -54,12 +55,18 @@ static DEFAULT_TP: Lazy<Mutex<Tracepoint<DefaultTracer>>> =
 
 #[cfg(feature = "test-probe")]
 #[allow(named_asm_labels)]
-fn test_probe() {
+fn test_probe(a: usize, b: usize) {
     use core::arch::asm;
+    kprintln!("[TEST PROBE] In test_probe function with a={}, b={}", a, b);
+    let mut res = 0;
     unsafe {
-        asm!("test_probe_flag:", "c.addi t0, 5");
+        asm!("test_probe_flag:", "beq t0, t1, test_probe_flag2", in("t0") a, in("t1") b);
     }
-    kprintln!("[TEST PROBE] Inside test_probe function.");
+    res += 1;
+    unsafe {
+        asm!("test_probe_flag2:", "c.addi t0, 5");
+    }
+    kprintln!("[TEST PROBE] Inside test_probe function. res={}", res);
 }
 
 #[cfg(feature = "test-probe")]
@@ -151,13 +158,15 @@ pub extern "C" fn main(hart_id: usize, dtb: usize) -> ! {
         });
         register_probe(probe.clone());
 
-        test_probe();
+        kprintln!("[TEST PROBE] Calling test_probe function.");
+
+        test_probe(10, 12);
 
         kprintln!("[TEST PROBE] test_probe function returned.");
 
-        unregister_probe(probe.clone());
+        // unregister_probe(probe.clone());
 
-        test_probe();
+        test_probe(10, 12);
     }
     #[cfg(feature = "test-kallsyms")]
     {

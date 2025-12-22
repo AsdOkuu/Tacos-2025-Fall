@@ -1,4 +1,6 @@
 use alloc::{collections::btree_map::BTreeMap, sync::Arc, vec::Vec};
+use riscv_decode::decode;
+use riscv_decode::Instruction;
 
 use crate::{
     mem::KernelPgTable,
@@ -203,6 +205,17 @@ fn get_inst_len(first_byte: u8) -> usize {
     }
 }
 
+fn get_first_inst(insts: &[u8]) -> u32 {
+    if get_inst_len(insts[0]) == 2 {
+        ((insts[1] as u32) << 8) | (insts[0] as u32)
+    } else {
+        ((insts[3] as u32) << 24)
+            | ((insts[2] as u32) << 16)
+            | ((insts[1] as u32) << 8)
+            | (insts[0] as u32)
+    }
+}
+
 static ADDR_TO_PROBE: Lazy<Mutex<BTreeMap<usize, Arc<Probe>>>> =
     Lazy::new(|| Mutex::new(BTreeMap::new()));
 
@@ -210,7 +223,7 @@ static BREAK_ADDR_TO_PROBE: Lazy<Mutex<BTreeMap<usize, Arc<Probe>>>> =
     Lazy::new(|| Mutex::new(BTreeMap::new()));
 
 pub fn break_handler(frame: &mut Frame) {
-    // kprintln!("[PROBE] Breakpoint at address {:#x}", frame.sepc);
+    kprintln!("[PROBE] Breakpoint at address {:#x}", frame.sepc);
     let addr = frame.sepc;
     if let Some(probe) = ADDR_TO_PROBE.lock().get_mut(&addr) {
         probe.sema.down();
@@ -218,25 +231,106 @@ pub fn break_handler(frame: &mut Frame) {
         if let Some(handler) = probe.inner.lock().pre_handler {
             handler(frame);
         }
-        // set sepc to insts
-        frame.sepc = probe.inner.lock().insts.as_ptr() as usize;
-        // set kernel pagetable executable
-        let insts = probe.inner.lock().insts.as_ptr() as usize;
-        KernelPgTable::get()
-            .write()
-            .get_mut_pte(insts)
-            .unwrap()
-            .set_executable(true);
-        KernelPgTable::get()
-            .write()
-            .get_mut_pte(insts + 3)
-            .unwrap()
-            .set_executable(true);
-        KernelPgTable::get()
-            .write()
-            .get_mut_pte(insts + 5)
-            .unwrap()
-            .set_executable(true);
+        let inst = get_first_inst(&probe.inner.lock().insts);
+        kprintln!(
+            "[PROBE] Emulating instruction {:#x} at address {:#x}, decoded: {:?}",
+            inst,
+            addr,
+            decode(inst)
+        );
+        // emulate control flow instructions & directly run other instructions
+        match decode(inst) {
+            Ok(Instruction::Jal(i)) => {
+                let offset = i.imm();
+                frame.sepc = addr + offset as usize;
+                frame.x[i.rd() as usize] = addr + 4;
+            }
+            Ok(Instruction::Jalr(i)) => {
+                let base = frame.x[i.rs1() as usize];
+                let offset = i.imm();
+                frame.sepc = (base + offset as usize) & !1;
+                frame.x[i.rd() as usize] = addr + 4;
+            }
+            Ok(Instruction::Beq(i)) => {
+                kprintln!("beq");
+                if frame.x[i.rs1() as usize] == frame.x[i.rs2() as usize] {
+                    let offset = i.imm();
+                    frame.sepc = addr + offset as usize;
+                } else {
+                    frame.sepc += 4;
+                }
+            }
+            Ok(Instruction::Bne(i)) => {
+                if frame.x[i.rs1() as usize] != frame.x[i.rs2() as usize] {
+                    let offset = i.imm();
+                    frame.sepc = addr + offset as usize;
+                } else {
+                    frame.sepc += 4;
+                }
+            }
+            Ok(Instruction::Bge(i)) => {
+                if frame.x[i.rs1() as usize] as isize >= frame.x[i.rs2() as usize] as isize {
+                    let offset = i.imm();
+                    frame.sepc = addr + offset as usize;
+                } else {
+                    frame.sepc += 4;
+                }
+            }
+            Ok(Instruction::Bgeu(i)) => {
+                if frame.x[i.rs1() as usize] >= frame.x[i.rs2() as usize] {
+                    let offset = i.imm();
+                    frame.sepc = addr + offset as usize;
+                } else {
+                    frame.sepc += 4;
+                }
+            }
+            Ok(Instruction::Blt(i)) => {
+                kprintln!("blt");
+                if (frame.x[i.rs1() as usize] as isize) < frame.x[i.rs2() as usize] as isize {
+                    let offset = i.imm();
+                    frame.sepc = addr + offset as usize;
+                } else {
+                    frame.sepc += 4;
+                }
+            }
+            Ok(Instruction::Bltu(i)) => {
+                if frame.x[i.rs1() as usize] < frame.x[i.rs2() as usize] {
+                    let offset = i.imm();
+                    frame.sepc = addr + offset as usize;
+                } else {
+                    frame.sepc += 4;
+                }
+            }
+            _ => {
+                kprintln!("no any");
+                // set sepc to insts
+                frame.sepc = probe.inner.lock().insts.as_ptr() as usize;
+                // set kernel pagetable executable
+                let insts = probe.inner.lock().insts.as_ptr() as usize;
+                KernelPgTable::get()
+                    .write()
+                    .get_mut_pte(insts)
+                    .unwrap()
+                    .set_executable(true);
+                KernelPgTable::get()
+                    .write()
+                    .get_mut_pte(insts + 3)
+                    .unwrap()
+                    .set_executable(true);
+                KernelPgTable::get()
+                    .write()
+                    .get_mut_pte(insts + 5)
+                    .unwrap()
+                    .set_executable(true);
+                return;
+            }
+        }
+
+        // call post handler when emulated
+        if let Some(handler) = probe.inner.lock().post_handler {
+            handler(frame);
+        }
+        probe.sema.up();
     } else if let Some(probe) = BREAK_ADDR_TO_PROBE.lock().get_mut(&addr) {
         let insts = probe.inner.lock().insts.as_ptr() as usize;
         KernelPgTable::get()
@@ -272,7 +366,7 @@ pub fn probe_symbol(name: &str, offset: isize) -> Vec<Arc<Probe>> {
     let mut probes = Vec::new();
     let addresses = name_to_address(name);
     for addr in addresses {
-        let probe = Arc::new(Probe::new(addr + offset));
+        let probe = Arc::new(Probe::new(addr + offset as usize));
         probes.push(probe);
     }
     probes
