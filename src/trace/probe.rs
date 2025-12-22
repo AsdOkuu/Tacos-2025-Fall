@@ -49,6 +49,7 @@ impl ProbeData {
             self.break_addr = unsafe { self.insts.as_ptr().add(len) as usize };
             self.insts[len] = 0x02;
             self.insts[len + 1] = 0x90;
+            #[cfg(feature = "debug-probe")]
             kprintln!(
                 "[PROBE ENABLE] addr: {:#x}, break_addr: {:#x}, insts: {:x?}",
                 self.addr,
@@ -223,6 +224,7 @@ static BREAK_ADDR_TO_PROBE: Lazy<Mutex<BTreeMap<usize, Arc<Probe>>>> =
     Lazy::new(|| Mutex::new(BTreeMap::new()));
 
 pub fn break_handler(frame: &mut Frame) {
+    #[cfg(feature = "debug-probe")]
     kprintln!("[PROBE] Breakpoint at address {:#x}", frame.sepc);
     let addr = frame.sepc;
     if let Some(probe) = ADDR_TO_PROBE.lock().get_mut(&addr) {
@@ -232,6 +234,7 @@ pub fn break_handler(frame: &mut Frame) {
             handler(frame);
         }
         let inst = get_first_inst(&probe.inner.lock().insts);
+        #[cfg(feature = "debug-probe")]
         kprintln!(
             "[PROBE] Emulating instruction {:#x} at address {:#x}, decoded: {:?}",
             inst,
@@ -252,7 +255,6 @@ pub fn break_handler(frame: &mut Frame) {
                 frame.x[i.rd() as usize] = addr + 4;
             }
             Ok(Instruction::Beq(i)) => {
-                kprintln!("beq");
                 if frame.x[i.rs1() as usize] == frame.x[i.rs2() as usize] {
                     let offset = i.imm();
                     frame.sepc = addr + offset as usize;
@@ -285,7 +287,6 @@ pub fn break_handler(frame: &mut Frame) {
                 }
             }
             Ok(Instruction::Blt(i)) => {
-                kprintln!("blt");
                 if (frame.x[i.rs1() as usize] as isize) < frame.x[i.rs2() as usize] as isize {
                     let offset = i.imm();
                     frame.sepc = addr + offset as usize;
@@ -302,7 +303,6 @@ pub fn break_handler(frame: &mut Frame) {
                 }
             }
             _ => {
-                kprintln!("no any");
                 // set sepc to insts
                 frame.sepc = probe.inner.lock().insts.as_ptr() as usize;
                 // set kernel pagetable executable
