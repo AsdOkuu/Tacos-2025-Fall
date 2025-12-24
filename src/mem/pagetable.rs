@@ -35,7 +35,7 @@ use crate::mem::{
 };
 use crate::mem::{KERN_BASE, PG_SHIFT, VM_OFFSET};
 use crate::sync::rwlock::RwLock;
-use crate::sync::{Mutex, OnceCell};
+use crate::sync::OnceCell;
 use crate::userproc::MMapTableEntry;
 
 pub use self::entry::*;

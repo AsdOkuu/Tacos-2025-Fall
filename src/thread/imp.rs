@@ -12,6 +12,7 @@ use crate::mem::{kalloc, kfree, PageTable, PG_SIZE};
 use crate::sbi::interrupt;
 use crate::thread::schedule;
 use crate::thread::Manager;
+use crate::trace::RetProbeData;
 use crate::userproc::UserProc;
 
 pub const PRI_DEFAULT: u32 = 31;
@@ -41,6 +42,7 @@ pub struct Thread {
     pub userproc: Option<UserProc>,
     pub pagetable: Option<Mutex<PageTable>>,
     pub child: Mutex<Vec<Arc<Thread>>>,
+    pub probe_stack: Mutex<Vec<RetProbeData>>,
 }
 
 impl Thread {
@@ -69,6 +71,7 @@ impl Thread {
             userproc,
             pagetable: pagetable.map(Mutex::new),
             child: Mutex::new(Vec::new()),
+            probe_stack: Mutex::new(Vec::new()),
         }
     }
 

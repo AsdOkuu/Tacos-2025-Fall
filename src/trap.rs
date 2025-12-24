@@ -22,6 +22,7 @@ use riscv::register::*;
 #[repr(C)]
 
 /// Trap context
+#[derive(Clone)]
 pub struct Frame {
     /// General regs[0..31].
     pub x: [usize; 32],

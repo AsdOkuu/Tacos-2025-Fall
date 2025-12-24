@@ -26,6 +26,8 @@ thread-scheduler-priority = []
 
 test-probe = []
 
+test-retprobe = []
+
 test-kallsyms = []
 
 # ----------------------------------- TEST ----------------------------------- #

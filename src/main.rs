@@ -17,6 +17,12 @@ pub mod fs;
 pub mod io;
 pub mod mem;
 pub mod sync;
+#[cfg(any(
+    feature = "test-probe",
+    feature = "test-retprobe",
+    feature = "test-kallsyms"
+))]
+pub mod tests;
 pub mod thread;
 pub mod trace;
 pub mod trap;
@@ -52,27 +58,6 @@ pub type Result<T> = core::result::Result<T, OsError>;
 
 static DEFAULT_TP: Lazy<Mutex<Tracepoint<DefaultTracer>>> =
     Lazy::new(|| Mutex::new(Tracepoint::new(TraceLevel::Debug)));
-
-#[cfg(feature = "test-probe")]
-#[allow(named_asm_labels)]
-fn test_probe(a: usize, b: usize) {
-    use core::arch::asm;
-    kprintln!("[TEST PROBE] In test_probe function with a={}, b={}", a, b);
-    let mut res = 0;
-    unsafe {
-        asm!("test_probe_flag:", "beq t0, t1, test_probe_flag2", in("t0") a, in("t1") b);
-    }
-    res += 1;
-    unsafe {
-        asm!("test_probe_flag2:", "c.addi t0, 5");
-    }
-    kprintln!("[TEST PROBE] Inside test_probe function. res={}", res);
-}
-
-#[cfg(feature = "test-probe")]
-extern "C" {
-    fn test_probe_flag();
-}
 
 /// Initializes major components of our kernel
 ///
@@ -137,62 +122,6 @@ pub extern "C" fn main(hart_id: usize, dtb: usize) -> ! {
     // Init timer & external interrupt
     sbi::interrupt::init();
 
-    #[cfg(feature = "test-probe")]
-    {
-        use alloc::sync::Arc;
-        use trace::register_probe;
-        use trace::Probe;
-
-        use crate::trace::probe_symbol;
-        use crate::trace::unregister_probe;
-
-        // let probe_addr = test_probe_flag as usize;
-        // let probe = Arc::new(Probe::new(probe_addr));
-        let probes = probe_symbol("test_probe_flag", 0);
-        let probe = probes.get(0).unwrap();
-        probe.set_pre_handler(|frame| {
-            kprintln!("[PROBE] Pre handler called.");
-        });
-        probe.set_post_handler(|frame| {
-            kprintln!("[PROBE] Post handler called.");
-        });
-        register_probe(probe.clone());
-
-        kprintln!("[TEST PROBE] Calling test_probe function.");
-
-        test_probe(10, 12);
-
-        kprintln!("[TEST PROBE] test_probe function returned.");
-
-        // unregister_probe(probe.clone());
-
-        test_probe(10, 12);
-    }
-    #[cfg(feature = "test-kallsyms")]
-    {
-        kprintln!("[TEST KALLSYMS]");
-        kprintln!("[TEST KALLSYMS] Number of symbols: {}", unsafe {
-            *trace::symbol::get_kallsyms_num()
-        });
-        kprintln!("[TEST KALLSYMS] The first name: {}", unsafe {
-            let name_ptr = trace::symbol::get_kallsyms_names();
-            let index_ptr = trace::symbol::get_kallsyms_names_index();
-            let sname_ptr = name_ptr.add(*index_ptr as usize);
-            let mut len = 0;
-            while *sname_ptr.add(len) != 0 {
-                len += 1;
-            }
-            let name_slice = slice::from_raw_parts(sname_ptr, len);
-            str::from_utf8(name_slice).unwrap()
-        });
-        kprintln!("[TEST KALLSYMS] The first address: {:#x}", unsafe {
-            let addr_ptr = trace::symbol::get_kallsyms_address();
-            *addr_ptr as usize
-        });
-        kprintln!("[TEST KALLSYMS] Lookup 'core::option::Option<T>::map':");
-        let addresses = trace::symbol::name_to_address("core::option::Option<T>::map");
-        kprintln!("[TEST KALLSYMS] Addresses found: {:?}", addresses);
-    }
     #[cfg(feature = "test")]
     {
         use alloc::sync::Arc;
@@ -201,6 +130,15 @@ pub extern "C" fn main(hart_id: usize, dtb: usize) -> ! {
         thread::spawn("test", move || crate::test::main(sema2, _bootargs));
         sema.down();
     }
+
+    #[cfg(feature = "test-probe")]
+    tests::test_probe::test_probe();
+
+    #[cfg(feature = "test-retprobe")]
+    tests::test_retprobe::test_retprobe();
+
+    #[cfg(feature = "test-kallsyms")]
+    tests::test_kallsyms::test_kallsyms();
 
     #[cfg(feature = "shell")]
     {

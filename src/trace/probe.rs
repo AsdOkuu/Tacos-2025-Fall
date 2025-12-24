@@ -1,7 +1,11 @@
+use core::arch;
+use core::panic;
+
 use alloc::{collections::btree_map::BTreeMap, sync::Arc, vec::Vec};
 use riscv_decode::decode;
 use riscv_decode::Instruction;
 
+use crate::mem::PG_SIZE;
 use crate::{
     mem::KernelPgTable,
     sync::{Lazy, Mutex, Semaphore},
@@ -163,39 +167,95 @@ impl Probe {
     }
 
     fn enable(&self) {
-        self.sema.down();
-        {
-            let mut data = self.inner.lock();
-            data.enable();
-        }
-        self.sema.up();
+        let mut data = self.inner.lock();
+        data.enable();
     }
 
     fn disable(&self) {
-        self.sema.down();
-        {
-            let mut data = self.inner.lock();
-            data.disable();
+        let mut data = self.inner.lock();
+        data.disable();
+    }
+}
+
+pub struct RetProbe {
+    probe: Arc<Probe>,
+    tid: isize,
+    post_handler: Option<fn(&mut Frame)>,
+    sema: Semaphore,
+}
+
+impl RetProbe {
+    pub fn new(addr: usize, tid: isize, post_handler: Option<fn(&mut Frame)>) -> Self {
+        Self {
+            probe: Arc::new(Probe::new(addr)),
+            tid,
+            post_handler,
+            sema: Semaphore::new(1),
         }
+    }
+
+    pub fn set_pre_handler(&mut self, handler: fn(&mut Frame)) {
+        self.sema.down();
+        self.probe.set_pre_handler(handler);
         self.sema.up();
+    }
+
+    fn enable(&self) {
+        register_probe(self.probe.clone());
+    }
+
+    fn disable(&self) {
+        unregister_probe(self.probe.clone());
+    }
+}
+
+pub struct RetProbeData {
+    ra: usize,
+    handler: Option<fn(&mut Frame)>,
+}
+
+impl RetProbeData {
+    pub fn new(ra: usize, handler: Option<fn(&mut Frame)>) -> Self {
+        Self { ra, handler }
     }
 }
 
 pub fn register_probe(probe: Arc<Probe>) {
+    probe.sema.down();
     probe.enable();
     let addr = probe.inner.lock().addr;
     ADDR_TO_PROBE.lock().insert(addr, probe.clone());
     let break_addr = probe.inner.lock().break_addr;
-    BREAK_ADDR_TO_PROBE.lock().insert(break_addr, probe);
+    BREAK_ADDR_TO_PROBE.lock().insert(break_addr, probe.clone());
+    probe.sema.up();
 }
 
 pub fn unregister_probe(probe: Arc<Probe>) {
+    probe.sema.down();
     let addr = probe.inner.lock().addr;
     if let Some(probe) = ADDR_TO_PROBE.lock().remove(&addr) {
         let break_addr = probe.inner.lock().break_addr;
         BREAK_ADDR_TO_PROBE.lock().remove(&break_addr);
     }
     probe.disable();
+    probe.sema.up();
+}
+
+pub fn register_retprobe(retprobe: Arc<RetProbe>) {
+    retprobe.sema.down();
+    retprobe.enable();
+    let addr = retprobe.probe.inner.lock().addr;
+    ADDR_TO_RET.lock().insert(addr, retprobe.clone());
+    retprobe.sema.up();
+}
+
+pub fn unregister_retprobe(retprobe: Arc<RetProbe>) {
+    retprobe.sema.down();
+    let addr = retprobe.probe.inner.lock().addr;
+    if let Some(retprobe) = ADDR_TO_RET.lock().remove(&addr) {
+        retprobe.disable();
+    }
+    retprobe.sema.up();
 }
 
 fn get_inst_len(first_byte: u8) -> usize {
@@ -217,16 +277,140 @@ fn get_first_inst(insts: &[u8]) -> u32 {
     }
 }
 
+fn decode_execute(inst: u32, frame: &mut Frame) -> bool {
+    let addr = frame.sepc;
+    // emulate control flow instructions & directly run other instructions
+    match decode(inst) {
+        Ok(Instruction::Jal(i)) => {
+            let offset = i.imm();
+            frame.sepc = addr + offset as usize;
+            frame.x[i.rd() as usize] = addr + 4;
+        }
+        Ok(Instruction::Jalr(i)) => {
+            let base = frame.x[i.rs1() as usize];
+            let offset = i.imm();
+            frame.sepc = (base + offset as usize) & !1;
+            frame.x[i.rd() as usize] = addr + 4;
+        }
+        Ok(Instruction::Beq(i)) => {
+            if frame.x[i.rs1() as usize] == frame.x[i.rs2() as usize] {
+                let offset = i.imm();
+                frame.sepc = addr + offset as usize;
+            } else {
+                frame.sepc += 4;
+            }
+        }
+        Ok(Instruction::Bne(i)) => {
+            if frame.x[i.rs1() as usize] != frame.x[i.rs2() as usize] {
+                let offset = i.imm();
+                frame.sepc = addr + offset as usize;
+            } else {
+                frame.sepc += 4;
+            }
+        }
+        Ok(Instruction::Bge(i)) => {
+            if frame.x[i.rs1() as usize] as isize >= frame.x[i.rs2() as usize] as isize {
+                let offset = i.imm();
+                frame.sepc = addr + offset as usize;
+            } else {
+                frame.sepc += 4;
+            }
+        }
+        Ok(Instruction::Bgeu(i)) => {
+            if frame.x[i.rs1() as usize] >= frame.x[i.rs2() as usize] {
+                let offset = i.imm();
+                frame.sepc = addr + offset as usize;
+            } else {
+                frame.sepc += 4;
+            }
+        }
+        Ok(Instruction::Blt(i)) => {
+            if (frame.x[i.rs1() as usize] as isize) < frame.x[i.rs2() as usize] as isize {
+                let offset = i.imm();
+                frame.sepc = addr + offset as usize;
+            } else {
+                frame.sepc += 4;
+            }
+        }
+        Ok(Instruction::Bltu(i)) => {
+            if frame.x[i.rs1() as usize] < frame.x[i.rs2() as usize] {
+                let offset = i.imm();
+                frame.sepc = addr + offset as usize;
+            } else {
+                frame.sepc += 4;
+            }
+        }
+        _ => {
+            return false;
+        }
+    }
+    true
+}
+
+fn set_executable(addr: usize, len: usize, executable: bool) {
+    for offset in (0..len - 1).step_by(PG_SIZE) {
+        KernelPgTable::get()
+            .write()
+            .get_mut_pte(addr + offset)
+            .unwrap()
+            .set_executable(executable);
+    }
+    KernelPgTable::get()
+        .write()
+        .get_mut_pte(addr + len - 1)
+        .unwrap()
+        .set_executable(executable);
+}
+
 static ADDR_TO_PROBE: Lazy<Mutex<BTreeMap<usize, Arc<Probe>>>> =
     Lazy::new(|| Mutex::new(BTreeMap::new()));
 
 static BREAK_ADDR_TO_PROBE: Lazy<Mutex<BTreeMap<usize, Arc<Probe>>>> =
     Lazy::new(|| Mutex::new(BTreeMap::new()));
 
+static ADDR_TO_RET: Lazy<Mutex<BTreeMap<usize, Arc<RetProbe>>>> =
+    Lazy::new(|| Mutex::new(BTreeMap::new()));
+
+static TRAMPOLINE: Lazy<usize> = Lazy::new(|| trampoline as usize);
+
 pub fn break_handler(frame: &mut Frame) {
     #[cfg(feature = "debug-probe")]
     kprintln!("[PROBE] Breakpoint at address {:#x}", frame.sepc);
     let addr = frame.sepc;
+
+    if addr == *TRAMPOLINE {
+        if let Some(data) = current().probe_stack.lock().pop() {
+            // kprintln!("[TEST RETPROBE] trampoline: {:#x}", *TRAMPOLINE);
+            // kprintln!(
+            //     "[TEST RETPROBE] ebreak len: {}",
+            //     get_inst_len(unsafe { *((*TRAMPOLINE) as *const u8) })
+            // );
+            // kprintln!("[TEST RETPROBE] return addr: {:#x}", data.ra);
+            frame.x[1] = data.ra;
+            frame.sepc += get_inst_len(unsafe { *((*TRAMPOLINE) as *const u8) });
+            if let Some(handler) = data.handler {
+                handler(frame);
+            }
+        } else {
+            panic!("No return probe data found in current thread's probe stack.");
+        }
+        return;
+    }
+
+    if let Some(retprobe) = ADDR_TO_RET.lock().get_mut(&addr) {
+        if current().id() == retprobe.tid {
+            if let Some(handler) = retprobe.probe.inner.lock().pre_handler {
+                handler(frame);
+            }
+            // change ra
+            current()
+                .probe_stack
+                .lock()
+                .push(RetProbeData::new(frame.x[1], retprobe.post_handler.clone()));
+            frame.x[1] = *TRAMPOLINE;
+        }
+    }
+
     if let Some(probe) = ADDR_TO_PROBE.lock().get_mut(&addr) {
         probe.sema.down();
         // call pre handler
@@ -242,112 +426,22 @@ pub fn break_handler(frame: &mut Frame) {
             decode(inst)
         );
         // emulate control flow instructions & directly run other instructions
-        match decode(inst) {
-            Ok(Instruction::Jal(i)) => {
-                let offset = i.imm();
-                frame.sepc = addr + offset as usize;
-                frame.x[i.rd() as usize] = addr + 4;
+        if !decode_execute(inst, frame) {
+            // set sepc to insts
+            frame.sepc = probe.inner.lock().insts.as_ptr() as usize;
+            // set kernel pagetable executable
+            let insts = probe.inner.lock().insts.as_ptr() as usize;
+            set_executable(insts, 6, true);
+        } else {
+            // call post handler when emulated
+            if let Some(handler) = probe.inner.lock().post_handler {
+                handler(frame);
             }
-            Ok(Instruction::Jalr(i)) => {
-                let base = frame.x[i.rs1() as usize];
-                let offset = i.imm();
-                frame.sepc = (base + offset as usize) & !1;
-                frame.x[i.rd() as usize] = addr + 4;
-            }
-            Ok(Instruction::Beq(i)) => {
-                if frame.x[i.rs1() as usize] == frame.x[i.rs2() as usize] {
-                    let offset = i.imm();
-                    frame.sepc = addr + offset as usize;
-                } else {
-                    frame.sepc += 4;
-                }
-            }
-            Ok(Instruction::Bne(i)) => {
-                if frame.x[i.rs1() as usize] != frame.x[i.rs2() as usize] {
-                    let offset = i.imm();
-                    frame.sepc = addr + offset as usize;
-                } else {
-                    frame.sepc += 4;
-                }
-            }
-            Ok(Instruction::Bge(i)) => {
-                if frame.x[i.rs1() as usize] as isize >= frame.x[i.rs2() as usize] as isize {
-                    let offset = i.imm();
-                    frame.sepc = addr + offset as usize;
-                } else {
-                    frame.sepc += 4;
-                }
-            }
-            Ok(Instruction::Bgeu(i)) => {
-                if frame.x[i.rs1() as usize] >= frame.x[i.rs2() as usize] {
-                    let offset = i.imm();
-                    frame.sepc = addr + offset as usize;
-                } else {
-                    frame.sepc += 4;
-                }
-            }
-            Ok(Instruction::Blt(i)) => {
-                if (frame.x[i.rs1() as usize] as isize) < frame.x[i.rs2() as usize] as isize {
-                    let offset = i.imm();
-                    frame.sepc = addr + offset as usize;
-                } else {
-                    frame.sepc += 4;
-                }
-            }
-            Ok(Instruction::Bltu(i)) => {
-                if frame.x[i.rs1() as usize] < frame.x[i.rs2() as usize] {
-                    let offset = i.imm();
-                    frame.sepc = addr + offset as usize;
-                } else {
-                    frame.sepc += 4;
-                }
-            }
-            _ => {
-                // set sepc to insts
-                frame.sepc = probe.inner.lock().insts.as_ptr() as usize;
-                // set kernel pagetable executable
-                let insts = probe.inner.lock().insts.as_ptr() as usize;
-                KernelPgTable::get()
-                    .write()
-                    .get_mut_pte(insts)
-                    .unwrap()
-                    .set_executable(true);
-                KernelPgTable::get()
-                    .write()
-                    .get_mut_pte(insts + 3)
-                    .unwrap()
-                    .set_executable(true);
-                KernelPgTable::get()
-                    .write()
-                    .get_mut_pte(insts + 5)
-                    .unwrap()
-                    .set_executable(true);
-                return;
-            }
+            probe.sema.up();
         }
-
-        // call post handler when emulated
-        if let Some(handler) = probe.inner.lock().post_handler {
-            handler(frame);
-        }
-        probe.sema.up();
     } else if let Some(probe) = BREAK_ADDR_TO_PROBE.lock().get_mut(&addr) {
         let insts = probe.inner.lock().insts.as_ptr() as usize;
-        KernelPgTable::get()
-            .write()
-            .get_mut_pte(insts)
-            .unwrap()
-            .set_executable(false);
-        KernelPgTable::get()
-            .write()
-            .get_mut_pte(insts + 3)
-            .unwrap()
-            .set_executable(false);
-        KernelPgTable::get()
-            .write()
-            .get_mut_pte(insts + 5)
-            .unwrap()
-            .set_executable(false);
+        set_executable(insts, 6, false);
         // call post handler
         if let Some(handler) = probe.inner.lock().post_handler {
             handler(frame);
@@ -370,4 +464,17 @@ pub fn probe_symbol(name: &str, offset: isize) -> Vec<Arc<Probe>> {
         probes.push(probe);
     }
     probes
+}
+
+extern "C" {
+    fn trampoline();
+}
+
+arch::global_asm! {r#"
+    .globl trampoline
+    .align 2
+    trampoline:
+        ebreak
+        ret
+"#
 }
