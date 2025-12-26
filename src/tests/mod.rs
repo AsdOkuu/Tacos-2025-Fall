@@ -1,3 +1,40 @@
+#[cfg(feature = "test-tracepoint")]
+pub mod test_tracepoint {
+    use crate::sync::lazy::Lazy;
+    use crate::sync::Mutex;
+    use crate::trace::TraceLevel;
+    use crate::trace::Traceable;
+    use crate::trace::Tracepoint;
+    struct TestTrace {
+        a: u32,
+        b: u32,
+    }
+    impl Traceable for TestTrace {
+        fn trace_handler(&self) {
+            kprintln!("[TEST TP] a: {}, b: {}", self.a, self.b);
+        }
+    }
+    static TP: Lazy<Mutex<Tracepoint<TestTrace>>> =
+        Lazy::new(|| Mutex::new(Tracepoint::<TestTrace>::new(TraceLevel::Debug)));
+    fn gcd(a: u32, b: u32) -> u32 {
+        TP.lock().trace(&TestTrace { a, b });
+        if a == 0 {
+            a
+        } else if a > b {
+            gcd(b, a)
+        } else {
+            gcd(b % a, a)
+        }
+    }
+    pub fn test_tracepoint() {
+        TP.lock().enable();
+        gcd(16, 12);
+        TP.lock().disable();
+        gcd(16, 12);
+        kprintln!("[TEST TP] trace count: {}", TP.lock().trace_count());
+    }
+}
+
 #[cfg(feature = "test-probe")]
 pub mod test_probe {
     #[allow(named_asm_labels)]
@@ -31,10 +68,10 @@ pub mod test_probe {
         let probes = probe_symbol("test_probe_flag", 0);
         let probe = probes.get(0).unwrap();
         probe.set_pre_handler(|frame| {
-            kprintln!("[PROBE] Pre handler called.");
+            kprintln!("[TEST PROBE] Pre handler called.");
         });
         probe.set_post_handler(|frame| {
-            kprintln!("[PROBE] Post handler called.");
+            kprintln!("[TEST PROBE] Post handler called.");
         });
         register_probe(probe.clone());
 
@@ -92,10 +129,10 @@ pub mod test_retprobe {
 
     fn test_retprobe_func(a: usize, b: usize) -> usize {
         if a == b {
-            kprintln!("[TEST RETPROBE] Ret: 1");
+            kprintln!("[TEST RETPROBE] Equal.");
             return 1;
         }
-        kprintln!("[TEST RETPROBE] Ret: 99");
+        kprintln!("[TEST RETPROBE] Not equal.");
         return 99;
     }
 

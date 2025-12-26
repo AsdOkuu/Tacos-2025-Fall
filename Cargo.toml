@@ -24,6 +24,8 @@ shell = []
 
 thread-scheduler-priority = []
 
+test-tracepoint = []
+
 test-probe = []
 
 test-retprobe = []

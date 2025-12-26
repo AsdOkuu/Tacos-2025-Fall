@@ -18,6 +18,7 @@ pub mod io;
 pub mod mem;
 pub mod sync;
 #[cfg(any(
+    feature = "test-tracepoint",
     feature = "test-probe",
     feature = "test-retprobe",
     feature = "test-kallsyms"
@@ -41,12 +42,6 @@ use riscv::register;
 use fs::{disk::DISKFS, FileSys};
 use mem::PhysAddr;
 
-use sync::Lazy;
-use sync::Mutex;
-use trace::DefaultTracer;
-use trace::TraceLevel;
-use trace::Tracepoint;
-
 extern "C" {
     fn sbss();
     fn ebss();
@@ -55,9 +50,6 @@ extern "C" {
 }
 
 pub type Result<T> = core::result::Result<T, OsError>;
-
-static DEFAULT_TP: Lazy<Mutex<Tracepoint<DefaultTracer>>> =
-    Lazy::new(|| Mutex::new(Tracepoint::new(TraceLevel::Debug)));
 
 /// Initializes major components of our kernel
 ///
@@ -130,6 +122,9 @@ pub extern "C" fn main(hart_id: usize, dtb: usize) -> ! {
         thread::spawn("test", move || crate::test::main(sema2, _bootargs));
         sema.down();
     }
+
+    #[cfg(feature = "test-tracepoint")]
+    tests::test_tracepoint::test_tracepoint();
 
     #[cfg(feature = "test-probe")]
     tests::test_probe::test_probe();

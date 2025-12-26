@@ -281,6 +281,10 @@ fn decode_execute(inst: u32, frame: &mut Frame) -> bool {
     let addr = frame.sepc;
     // emulate control flow instructions & directly run other instructions
     match decode(inst) {
+        Ok(Instruction::Auipc(i)) => {
+            frame.x[i.rd() as usize] = addr + i.imm() as usize;
+            frame.sepc += 4;
+        }
         Ok(Instruction::Jal(i)) => {
             let offset = i.imm();
             frame.sepc = addr + offset as usize;
@@ -398,7 +402,7 @@ pub fn break_handler(frame: &mut Frame) {
     }
 
     if let Some(retprobe) = ADDR_TO_RET.lock().get_mut(&addr) {
-        if current().id() == retprobe.tid {
+        if retprobe.tid < 0 || current().id() == retprobe.tid {
             if let Some(handler) = retprobe.probe.inner.lock().pre_handler {
                 handler(frame);
             }
