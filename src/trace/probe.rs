@@ -14,6 +14,36 @@ use crate::{
     trap::Frame,
 };
 
+fn set_writable(addr: usize, len: usize, writable: bool) {
+    for offset in (0..len - 1).step_by(PG_SIZE) {
+        KernelPgTable::get()
+            .write()
+            .get_mut_pte(addr + offset)
+            .unwrap()
+            .set_writable(writable);
+    }
+    KernelPgTable::get()
+        .write()
+        .get_mut_pte(addr + len - 1)
+        .unwrap()
+        .set_writable(writable);
+}
+
+fn set_executable(addr: usize, len: usize, executable: bool) {
+    for offset in (0..len - 1).step_by(PG_SIZE) {
+        KernelPgTable::get()
+            .write()
+            .get_mut_pte(addr + offset)
+            .unwrap()
+            .set_executable(executable);
+    }
+    KernelPgTable::get()
+        .write()
+        .get_mut_pte(addr + len - 1)
+        .unwrap()
+        .set_executable(executable);
+}
+
 struct ProbeData {
     pre_handler: Option<fn(&mut Frame)>,
     post_handler: Option<fn(&mut Frame)>,
@@ -62,62 +92,22 @@ impl ProbeData {
             );
             // edit instruction at addr
             if len == 2 {
-                let writable = KernelPgTable::get()
-                    .read()
-                    .get_pte(self.addr)
-                    .unwrap()
-                    .is_writable();
-                KernelPgTable::get()
-                    .write()
-                    .get_mut_pte(self.addr)
-                    .unwrap()
-                    .set_writable(true);
+                set_writable(self.addr, 2, true);
                 unsafe {
                     *((self.addr as *mut u8).add(0)) = 0x02;
                     *((self.addr as *mut u8).add(1)) = 0x90;
                 }
-                KernelPgTable::get()
-                    .write()
-                    .get_mut_pte(self.addr)
-                    .unwrap()
-                    .set_writable(writable);
+
+                set_writable(self.addr, 2, false);
             } else if len == 4 {
-                let writable0 = KernelPgTable::get()
-                    .read()
-                    .get_pte(self.addr)
-                    .unwrap()
-                    .is_writable();
-                let writable3 = KernelPgTable::get()
-                    .read()
-                    .get_pte(self.addr + 3)
-                    .unwrap()
-                    .is_writable();
-                KernelPgTable::get()
-                    .write()
-                    .get_mut_pte(self.addr)
-                    .unwrap()
-                    .set_writable(true);
-                KernelPgTable::get()
-                    .write()
-                    .get_mut_pte(self.addr + 3)
-                    .unwrap()
-                    .set_writable(true);
+                set_writable(self.addr, 4, true);
                 unsafe {
                     *((self.addr as *mut u8).add(0)) = 0x73;
                     *((self.addr as *mut u8).add(1)) = 0x00;
                     *((self.addr as *mut u8).add(2)) = 0x10;
                     *((self.addr as *mut u8).add(3)) = 0x00;
                 }
-                KernelPgTable::get()
-                    .write()
-                    .get_mut_pte(self.addr)
-                    .unwrap()
-                    .set_writable(writable0);
-                KernelPgTable::get()
-                    .write()
-                    .get_mut_pte(self.addr + 3)
-                    .unwrap()
-                    .set_writable(writable3);
+                set_writable(self.addr, 4, false);
             }
         }
     }
@@ -126,11 +116,13 @@ impl ProbeData {
         if self.enable {
             self.enable = false;
             let len = get_inst_len(self.insts[0]);
+            set_writable(self.addr, len, true);
             for i in 0..len {
                 unsafe {
                     *((self.addr as *mut u8).add(i)) = self.insts[i];
                 }
             }
+            set_writable(self.addr, len, false);
         }
     }
 }
@@ -479,21 +471,6 @@ fn decode_execute(inst: u32, frame: &mut Frame) -> bool {
         }
     }
     true
-}
-
-fn set_executable(addr: usize, len: usize, executable: bool) {
-    for offset in (0..len - 1).step_by(PG_SIZE) {
-        KernelPgTable::get()
-            .write()
-            .get_mut_pte(addr + offset)
-            .unwrap()
-            .set_executable(executable);
-    }
-    KernelPgTable::get()
-        .write()
-        .get_mut_pte(addr + len - 1)
-        .unwrap()
-        .set_executable(executable);
 }
 
 static ADDR_TO_PROBE: Lazy<Mutex<BTreeMap<usize, Arc<Probe>>>> =

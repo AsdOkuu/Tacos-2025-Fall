@@ -127,10 +127,16 @@ pub extern "C" fn main(hart_id: usize, dtb: usize) -> ! {
     tests::test_tracepoint::test_tracepoint();
 
     #[cfg(feature = "test-probe")]
-    tests::test_probe::test_probe();
+    {
+        tests::test_probe::test_probe();
+        tests::test_probe::test_probe_mt();
+    }
 
     #[cfg(feature = "test-retprobe")]
-    tests::test_retprobe::test_retprobe();
+    {
+        tests::test_retprobe::test_retprobe();
+        tests::test_retprobe::test_retprobe_mt();
+    }
 
     #[cfg(feature = "test-kallsyms")]
     tests::test_kallsyms::test_kallsyms();

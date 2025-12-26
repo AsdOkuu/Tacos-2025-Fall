@@ -5,7 +5,7 @@ use crate::mem::userbuf::{
     __knrl_read_usr_byte_pc, __knrl_read_usr_exit, __knrl_write_usr_byte_pc, __knrl_write_usr_exit,
 };
 use crate::mem::{PTEFlags, PageAlign, PageTable, MAX_USER_STACK, PG_SIZE};
-use crate::thread::{self};
+use crate::thread::{self, current};
 use crate::trap::Frame;
 use crate::userproc::{self};
 use crate::userproc::{PT_SEMA, ZERO_PAGE};
@@ -233,7 +233,12 @@ pub fn handler(frame: &mut Frame, _fault: Exception, addr: usize) {
                 frame.x[11] = 1; // set a1 to non-zero
                 frame.sepc = __knrl_write_usr_exit as _;
             } else {
-                panic!("Kernel page fault. sepc: {:#x}", frame.sepc);
+                panic!(
+                    "Kernel page fault. sepc: {:#x}, current: {} {}",
+                    frame.sepc,
+                    current().name(),
+                    current().id()
+                );
             }
         }
         SPP::User => {

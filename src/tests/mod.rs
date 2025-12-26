@@ -40,16 +40,16 @@ pub mod test_probe {
     #[allow(named_asm_labels)]
     fn test_probe_func(a: usize, b: usize) {
         use core::arch::asm;
-        kprintln!("[TEST PROBE] In test_probe function with a={}, b={}", a, b);
+        // kprintln!("[TEST PROBE] In test_probe function with a={}, b={}", a, b);
         let mut res = 0;
         unsafe {
-            asm!("test_probe_flag:", "beq t0, t1, test_probe_flag2", in("t0") a, in("t1") b);
+            asm!("test_probe_flag:", "j test_probe_flag2");
         }
         res += 1;
         unsafe {
             asm!("test_probe_flag2:", "c.addi t0, 5");
         }
-        kprintln!("[TEST PROBE] Inside test_probe function. res={}", res);
+        // kprintln!("[TEST PROBE] Inside test_probe function. res={}", res);
     }
 
     extern "C" {
@@ -77,16 +77,55 @@ pub mod test_probe {
 
         kprintln!("[TEST PROBE] Calling test_probe function.");
 
-        test_probe_func(10, 10);
+        test_probe_func(0, 0);
 
         kprintln!("[TEST PROBE] test_probe function returned.");
 
-        test_probe_func(10, 12);
+        test_probe_func(0, 1);
 
         unregister_probe(probe.clone());
 
-        test_probe_func(10, 10);
-        test_probe_func(10, 12);
+        test_probe_func(0, 0);
+        test_probe_func(0, 1);
+
+        kprintln!("{:#x}", unregister_probe as usize);
+    }
+
+    use crate::sync::lazy::Lazy;
+    use crate::sync::Mutex;
+    use crate::trace::Probe;
+    use alloc::sync::Arc;
+    static PRB: Lazy<Arc<Probe>> = Lazy::new(|| Arc::new(Probe::new(test_probe_func as usize)));
+
+    fn test_probe_mt_child() {
+        use crate::thread::current;
+        use crate::thread::exit;
+        use crate::thread::sleep;
+        for i in 0..3 {
+            test_probe_func(0, 0);
+            sleep(1);
+        }
+        kprintln!("{} end", current().id());
+        exit();
+    }
+
+    pub fn test_probe_mt() {
+        use crate::thread::current;
+        use crate::thread::sleep;
+        use crate::thread::spawn;
+        use crate::trace::register_probe;
+        use crate::trace::unregister_probe;
+        kprintln!("{:#x}", unregister_probe as usize);
+        PRB.set_pre_handler(|_frame| {
+            kprintln!("[TEST PROBE] {} {} in", current().name(), current().id())
+        });
+        register_probe(PRB.clone());
+        for i in 0..10 {
+            spawn("Child", test_probe_mt_child);
+        }
+        sleep(13);
+        let prb = PRB.clone();
+        unregister_probe(prb);
     }
 }
 
@@ -172,5 +211,51 @@ pub mod test_retprobe {
         test_retprobe_gcd(16, 12);
         unregister_retprobe(gcdprobe.clone());
         test_retprobe_gcd(16, 12);
+    }
+
+    use crate::thread::exit;
+    use crate::thread::sleep;
+    use crate::thread::spawn;
+    use sync::Lazy;
+    use trap::Frame;
+
+    static RPRB: Lazy<Arc<RetProbe>> = Lazy::new(|| {
+        Arc::new(RetProbe::new(
+            recur as usize,
+            -1,
+            Some(|frame: &mut Frame| {
+                kprintln!(
+                    "{} {}: height: {}",
+                    current().name(),
+                    current().id(),
+                    frame.x[10]
+                );
+            }),
+        ))
+    });
+
+    fn recur(depth: u32) -> u32 {
+        if depth == 0 {
+            0
+        } else {
+            let res = recur(depth - 1);
+            sleep(1);
+            res + 1
+        }
+    }
+
+    fn test_retprobe_mt_child() {
+        recur(3);
+        exit();
+    }
+
+    pub fn test_retprobe_mt() {
+        register_retprobe(RPRB.clone());
+        for _ in 0..10 {
+            spawn("RetChild", test_retprobe_mt_child);
+            sleep(1);
+        }
+        sleep(5);
+        unregister_retprobe(RPRB.clone());
     }
 }
