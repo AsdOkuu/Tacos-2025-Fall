@@ -277,8 +277,138 @@ fn get_first_inst(insts: &[u8]) -> u32 {
     }
 }
 
+enum RvcJump {
+    CJ { imm: i32 },
+    CBeqz { rs1: u8, imm: i32 },
+    Cbnez { rs1: u8, imm: i32 },
+    CJr { rs1: u8 },
+    CJalr { rs1: u8 },
+    NotAJump,
+}
+
+fn decode_cj_imm(inst: u16) -> i32 {
+    let inst = inst as i32;
+    let imm = ((inst >> 12) & 1) << 11 | // inst[12] -> imm[11]
+              ((inst >> 11) & 1) << 4  | // inst[11] -> imm[4]
+              ((inst >> 9)  & 3) << 8  | // inst[10:9] -> imm[9:8]
+              ((inst >> 8)  & 1) << 10 | // inst[8] -> imm[10]
+              ((inst >> 7)  & 1) << 6  | // inst[7] -> imm[6]
+              ((inst >> 6)  & 1) << 7  | // inst[6] -> imm[7]
+              ((inst >> 3)  & 7) << 1  | // inst[5:3] -> imm[3:1]
+              ((inst >> 2)  & 1) << 5; // inst[2] -> imm[5]
+
+    if (imm & (1 << 11)) != 0 {
+        imm | !0x7FF
+    } else {
+        imm
+    }
+}
+
+fn decode_cb_imm(inst: u16) -> i32 {
+    let inst = inst as i32;
+    let imm = ((inst >> 12) & 1) << 8 | // inst[12] -> imm[8]
+              ((inst >> 10) & 3) << 3 | // inst[11:10] -> imm[4:3]
+              ((inst >> 5)  & 3) << 6 | // inst[6:5] -> imm[7:6]
+              ((inst >> 3)  & 3) << 1 | // inst[4:3] -> imm[2:1]
+              ((inst >> 2)  & 1) << 5; // inst[2] -> imm[5]
+
+    if (imm & (1 << 8)) != 0 {
+        imm | !0x1FF
+    } else {
+        imm
+    }
+}
+
+fn decode_c(inst32: u32) -> RvcJump {
+    let inst = inst32 as u16;
+    let op = inst & 0b11; // inst[1:0]
+
+    match op {
+        // Quadrant 1: C.J, C.BEQZ, C.BNEZ
+        0b01 => {
+            let funct3 = (inst >> 13) & 0b111;
+            match funct3 {
+                // C.J: offset[11|4|9:8|10|6|7|3:1|5]
+                0b101 => {
+                    let imm = decode_cj_imm(inst);
+                    RvcJump::CJ { imm }
+                }
+                // C.BEQZ: offset[8|4:3|7:6|2:1|5], rs1' in [9:7]
+                0b110 => {
+                    let rs1 = ((inst >> 7) & 0b111) + 8;
+                    let imm = decode_cb_imm(inst);
+                    RvcJump::CBeqz {
+                        rs1: rs1 as u8,
+                        imm,
+                    }
+                }
+                // C.BNEZ
+                0b111 => {
+                    let rs1 = ((inst >> 7) & 0b111) + 8;
+                    let imm = decode_cb_imm(inst);
+                    RvcJump::Cbnez {
+                        rs1: rs1 as u8,
+                        imm,
+                    }
+                }
+                _ => RvcJump::NotAJump,
+            }
+        }
+        // Quadrant 2: C.JR, C.JALR
+        0b10 => {
+            let funct4 = (inst >> 12) & 0b1111;
+            let rs1 = (inst >> 7) & 0b11111; // bits [11:7]
+            let rs2 = (inst >> 2) & 0b11111; // bits [6:2]
+
+            // C.JR (funct4=1000, rs1!=0, rs2=0)
+            if funct4 == 0b1000 && rs1 != 0 && rs2 == 0 {
+                RvcJump::CJr { rs1: rs1 as u8 }
+            }
+            // C.JALR (funct4=1001, rs1!=0, rs2=0)
+            else if funct4 == 0b1001 && rs1 != 0 && rs2 == 0 {
+                RvcJump::CJalr { rs1: rs1 as u8 }
+            } else {
+                RvcJump::NotAJump
+            }
+        }
+        _ => RvcJump::NotAJump,
+    }
+}
+
 fn decode_execute(inst: u32, frame: &mut Frame) -> bool {
     let addr = frame.sepc;
+    if get_inst_len((inst & 0b11) as u8) == 2 {
+        match decode_c(inst) {
+            RvcJump::CJ { imm } => {
+                frame.sepc = addr + imm as usize;
+            }
+            RvcJump::CJr { rs1 } => {
+                frame.sepc = frame.x[rs1 as usize];
+            }
+            RvcJump::CJalr { rs1 } => {
+                frame.x[1] = addr + 2;
+                frame.sepc = frame.x[rs1 as usize];
+            }
+            RvcJump::CBeqz { rs1, imm } => {
+                if frame.x[rs1 as usize] == 0 {
+                    frame.sepc += imm as usize;
+                } else {
+                    frame.sepc += 2;
+                }
+            }
+            RvcJump::Cbnez { rs1, imm } => {
+                if frame.x[rs1 as usize] != 0 {
+                    frame.sepc += imm as usize;
+                } else {
+                    frame.sepc += 2;
+                }
+            }
+            RvcJump::NotAJump => {
+                return false;
+            }
+        }
+        return true;
+    }
     // emulate control flow instructions & directly run other instructions
     match decode(inst) {
         Ok(Instruction::Auipc(i)) => {
